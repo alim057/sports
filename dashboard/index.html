@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sports Betting Predictor</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon">🏀</span>
+                    <h1>Sports Betting Predictor</h1>
+                </div>
+                <nav class="nav">
+                    <button class="nav-btn active" data-tab="predictions">🔥 Best Bets</button>
+                    <button class="nav-btn" data-tab="evaluator">Bet Evaluator</button>
+                    <button class="nav-btn" data-tab="edge">Edge Analysis</button>
+                    <button class="nav-btn" data-tab="performance">Performance</button>
+                </nav>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Best Bets Tab -->
+            <section id="predictions" class="tab-content active">
+                <div class="section-header">
+                    <h2>🔥 Best Bets Today</h2>
+                </div>
+
+                <!-- Filters Bar -->
+                <div class="filters-bar">
+                    <div class="filter-group">
+                        <label>Sport</label>
+                        <select id="filter-sport" onchange="applyFilters()">
+                            <option value="all">All Sports</option>
+                            <option value="nba">🏀 NBA</option>
+                            <option value="nfl">🏈 NFL</option>
+                            <option value="ncaaf">🏈 NCAAF</option>
+                            <option value="mlb">⚾ MLB</option>
+                            <option value="nhl">🏒 NHL</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Bet Type</label>
+                        <select id="filter-bettype" onchange="applyFilters()">
+                            <option value="all">All Types</option>
+                            <option value="moneyline">Moneyline</option>
+                            <option value="spread">Spread</option>
+                            <option value="total">Over/Under</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Min EV</label>
+                        <select id="filter-ev" onchange="applyFilters()">
+                            <option value="0">Any Edge</option>
+                            <option value="2">2%+ EV</option>
+                            <option value="5">5%+ EV</option>
+                            <option value="10">10%+ EV</option>
+                        </select>
+                    </div>
+                    <button class="btn-primary" onclick="refreshAllBets()">
+                        <span class="icon">↻</span> Refresh All
+                    </button>
+                </div>
+
+                <!-- Summary Stats -->
+                <div class="bets-summary" id="bets-summary">
+                    <div class="summary-stat">
+                        <span class="stat-num" id="total-edges">0</span>
+                        <span class="stat-label">Total Edges</span>
+                    </div>
+                    <div class="summary-stat highlight">
+                        <span class="stat-num" id="avg-ev">0%</span>
+                        <span class="stat-label">Avg EV</span>
+                    </div>
+                    <div class="summary-stat">
+                        <span class="stat-num" id="total-sports">0</span>
+                        <span class="stat-label">Sports</span>
+                    </div>
+                </div>
+
+                <!-- Bets Grid -->
+                <div class="bets-grid" id="bets-container">
+                    <!-- Bets will be loaded here -->
+                </div>
+            </section>
+
+            <!-- Bet Detail Modal -->
+            <div class="modal-overlay" id="bet-modal" onclick="closeModal(event)">
+                <div class="modal-content" onclick="event.stopPropagation()">
+                    <button class="modal-close" onclick="closeModal()">&times;</button>
+                    <div id="modal-body">
+                        <!-- Filled dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bet Evaluator Tab -->
+            <section id="evaluator" class="tab-content">
+                <div class="section-header">
+                    <h2>🎯 Bet Evaluator</h2>
+                </div>
+
+                <div class="evaluator-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Sport</label>
+                            <select id="eval-sport" onchange="updateTeamOptions()">
+                                <option value="nba">🏀 NBA</option>
+                                <option value="nfl">🏈 NFL</option>
+                                <option value="ncaaf">🏈 NCAAF</option>
+                                <option value="mlb">⚾ MLB</option>
+                                <option value="nhl">🏒 NHL</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Home Team</label>
+                            <select id="eval-home"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Away Team</label>
+                            <select id="eval-away"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Home Odds</label>
+                            <input type="number" id="eval-home-odds" placeholder="-130" value="-130">
+                        </div>
+                        <div class="form-group">
+                            <label>Away Odds</label>
+                            <input type="number" id="eval-away-odds" placeholder="+110" value="110">
+                        </div>
+                    </div>
+                    <div class="form-row" style="margin-top: 15px;">
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="eval-historical">
+                                Historical Bet (won't affect model tracking)
+                            </label>
+                        </div>
+                        <button class="btn-primary btn-evaluate" onclick="evaluateBet()">
+                            ⚡ Evaluate
+                        </button>
+                    </div>
+                </div>
+
+                <div class="evaluator-result" id="eval-result">
+                    <p class="eval-placeholder">Select teams and odds to evaluate</p>
+                </div>
+            </section>
+
+            <!-- Edge Analysis Tab -->
+            <section id="edge" class="tab-content">
+                <div class="section-header">
+                    <h2>📊 Edge Analysis</h2>
+                </div>
+
+                <!-- Edge Summary Cards -->
+                <div class="stats-row">
+                    <div class="stat-card-modern">
+                        <div class="stat-icon">🎯</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="games-analyzed">0</span>
+                            <span class="stat-label">Games Analyzed</span>
+                        </div>
+                    </div>
+                    <div class="stat-card-modern highlight">
+                        <div class="stat-icon">✨</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="games-with-edge">0</span>
+                            <span class="stat-label">Games with Edge</span>
+                        </div>
+                    </div>
+                    <div class="stat-card-modern success">
+                        <div class="stat-icon">📈</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="avg-edge2">0%</span>
+                            <span class="stat-label">Average EV</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chart -->
+                <div class="chart-card">
+                    <h3>Edge Distribution by Team</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="edge-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Edge Table -->
+                <div class="table-card">
+                    <div class="table-header">
+                        <h3>All Identified Edges</h3>
+                    </div>
+                    <div class="table-scroll">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>Game</th>
+                                    <th>Pick</th>
+                                    <th>Odds</th>
+                                    <th>Model Prob</th>
+                                    <th>EV</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="edge-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Performance Tab -->
+            <section id="performance" class="tab-content">
+                <div class="section-header">
+                    <h2>📈 Performance Dashboard</h2>
+                </div>
+
+                <!-- Main Stats -->
+                <div class="stats-row">
+                    <div class="stat-card-modern">
+                        <div class="stat-icon">🎰</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="total-bets">0</span>
+                            <span class="stat-label">Total Bets</span>
+                        </div>
+                    </div>
+                    <div class="stat-card-modern highlight">
+                        <div class="stat-icon">🎯</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="win-rate">0%</span>
+                            <span class="stat-label">Win Rate</span>
+                        </div>
+                    </div>
+                    <div class="stat-card-modern">
+                        <div class="stat-icon">💵</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="total-wagered">$0</span>
+                            <span class="stat-label">Total Wagered</span>
+                        </div>
+                    </div>
+                    <div class="stat-card-modern" id="profit-card">
+                        <div class="stat-icon">💰</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="profit">$0</span>
+                            <span class="stat-label">Profit/Loss</span>
+                        </div>
+                    </div>
+                    <div class="stat-card-modern" id="roi-card">
+                        <div class="stat-icon">📊</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="roi">0%</span>
+                            <span class="stat-label">ROI</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Profit Chart -->
+                <div class="chart-card">
+                    <h3>Profit Over Time</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="profit-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Recent Bets Table -->
+                <div class="table-card">
+                    <div class="table-header">
+                        <h3>Recent Bets</h3>
+                    </div>
+                    <div class="table-scroll">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Sport</th>
+                                    <th>Game</th>
+                                    <th>Pick</th>
+                                    <th>Result</th>
+                                    <th>Odds</th>
+                                    <th>P/L</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-bets-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Disclaimer: For educational purposes only. Past performance does not guarantee future results.</p>
+        </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

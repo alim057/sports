@@ -1,0 +1,34 @@
+# Configuration for Sports Betting Predictor
+
+# API Keys
+odds_api:
+  api_key: "YOUR_ODDS_API_KEY_HERE"  # Get from https://the-odds-api.com/
+  base_url: "https://api.the-odds-api.com/v4"
+  
+# NBA Settings
+nba:
+  seasons:
+    - "2023-24"
+    - "2024-25"
+  min_games_for_features: 5  # Minimum games before calculating rolling stats
+
+# Feature Engineering
+features:
+  rolling_windows:
+    - 5   # Last 5 games
+    - 10  # Last 10 games
+  
+# Model Settings
+model:
+  type: "xgboost"  # Options: logistic, xgboost
+  test_size: 0.2
+  random_state: 42
+  
+# Betting Strategy
+betting:
+  min_ev_threshold: 0.02    # Minimum 2% expected value
+  max_kelly_fraction: 0.25  # Max 25% of Kelly for risk management
+  
+# Database
+database:
+  path: "./data/betting.db"
