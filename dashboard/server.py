@@ -23,6 +23,14 @@ app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
 
 
+@app.route('/')
+def index():
+    return send_from_directory('.', 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    return send_from_directory('.', path)
+
 def convert_numpy(obj):
     """Convert numpy types to Python native types for JSON serialization."""
     if isinstance(obj, dict):
