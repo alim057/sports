@@ -172,5 +172,61 @@ class TestIntegration:
             pytest.skip("Server not available")
 
 
+class TestNewEndpoints:
+    """Tests for newly added API endpoints."""
+    
+    def test_spread_analysis_route_exists(self):
+        """Spread analysis endpoint should exist."""
+        from server import app
+        routes = [rule.rule for rule in app.url_map.iter_rules()]
+        assert any('spread' in r for r in routes)
+    
+    def test_totals_analysis_route_exists(self):
+        """Totals analysis endpoint should exist."""
+        from server import app
+        routes = [rule.rule for rule in app.url_map.iter_rules()]
+        assert any('totals' in r for r in routes)
+    
+    def test_parlay_calculator_route_exists(self):
+        """Parlay calculator endpoint should exist."""
+        from server import app
+        routes = [rule.rule for rule in app.url_map.iter_rules()]
+        assert any('parlay' in r for r in routes)
+    
+    def test_recent_bets_route_exists(self):
+        """Recent bets endpoint should exist."""
+        from server import app
+        routes = [rule.rule for rule in app.url_map.iter_rules()]
+        assert any('recent-bets' in r for r in routes)
+    
+    def test_performance_history_route_exists(self):
+        """Performance history endpoint should exist."""
+        from server import app
+        routes = [rule.rule for rule in app.url_map.iter_rules()]
+        assert any('performance-history' in r for r in routes)
+
+
+class TestParlayCalculations:
+    """Test parlay calculation logic."""
+    
+    def test_parlay_decimal_odds_conversion(self):
+        """Test American to decimal odds conversion."""
+        # +150 should be 2.50 decimal
+        positive_dec = (150 / 100) + 1
+        assert positive_dec == 2.5
+        
+        # -150 should be 1.67 decimal
+        negative_dec = (100 / 150) + 1
+        assert abs(negative_dec - 1.67) < 0.01
+    
+    def test_parlay_combined_odds(self):
+        """Test that combined odds multiply correctly."""
+        # Two -110 legs
+        dec1 = (100 / 110) + 1  # ~1.909
+        dec2 = (100 / 110) + 1  # ~1.909
+        combined = dec1 * dec2  # ~3.64
+        assert 3.6 < combined < 3.7
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

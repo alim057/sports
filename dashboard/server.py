@@ -429,14 +429,25 @@ def get_spread_analysis():
             if not validate_moneyline_odds(home_odds, away_odds):
                 continue
             
-            # Simple spread model: assume slight edge based on spread size
-            # If home is heavily favored (negative spread), model gives them higher cover prob
+            # Dynamic spread model: probability varies based on spread size
+            # Larger spreads = harder to cover = lower probability
             def spread_cover_prob(spread, is_home=True):
-                # Larger spreads = lower cover probability
-                base = 0.50  # Market assumed fair
-                edge = 0.03  # Our assumed edge
+                spread = abs(float(spread)) if spread else 0
+                
+                # Base probability that adjusts with spread size
+                if spread <= 2.5:
+                    base = 0.53  # Small spreads - slight edge
+                elif spread <= 5.5:
+                    base = 0.51  # Medium spreads
+                elif spread <= 9.5:
+                    base = 0.49  # Larger spreads - harder to cover
+                else:
+                    base = 0.47  # Very large spreads (10+) - favorites often don't cover
+                
+                # Home court/field advantage
                 home_boost = 0.02 if is_home else 0
-                return min(0.65, max(0.35, base + edge + home_boost))
+                
+                return min(0.60, max(0.40, base + home_boost))
             
             home_cover_prob = spread_cover_prob(home_spread, True)
             away_cover_prob = spread_cover_prob(away_spread, False)
@@ -802,6 +813,61 @@ def get_sports():
             {'key': 'nhl', 'name': 'NHL Hockey', 'active': True}
         ]
     })
+
+
+@app.route('/api/parlay-calculator', methods=['POST'])
+def calculate_parlay():
+    """Calculate parlay odds and payout for multiple bets."""
+    try:
+        data = request.get_json()
+        legs = data.get('legs', [])
+        stake = data.get('stake', 100)
+        
+        if not legs or len(legs) < 2:
+            return jsonify({'error': 'Parlay requires at least 2 legs'}), 400
+        
+        decimal_odds = []
+        combined_prob = 1.0
+        
+        for leg in legs:
+            odds = leg.get('odds', -110)
+            prob = leg.get('probability', 0.5)
+            
+            if odds > 0:
+                dec = (odds / 100) + 1
+            else:
+                dec = (100 / abs(odds)) + 1
+            
+            decimal_odds.append(dec)
+            combined_prob *= prob
+        
+        combined_decimal = 1.0
+        for dec in decimal_odds:
+            combined_decimal *= dec
+        
+        if combined_decimal >= 2:
+            combined_american = round((combined_decimal - 1) * 100)
+        else:
+            combined_american = round(-100 / (combined_decimal - 1))
+        
+        payout = stake * combined_decimal
+        profit = payout - stake
+        parlay_ev = combined_prob * (combined_decimal - 1) - (1 - combined_prob)
+        
+        return jsonify({
+            'legs': len(legs),
+            'stake': stake,
+            'combinedOdds': combined_american,
+            'combinedDecimal': round(combined_decimal, 3),
+            'payout': round(payout, 2),
+            'profit': round(profit, 2),
+            'combinedProbability': round(combined_prob, 4),
+            'expectedValue': round(parlay_ev, 4),
+            'isPositiveEV': parlay_ev > 0
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
