@@ -19,6 +19,13 @@ from betting.edge_analyzer import EdgeAnalyzer
 from data.injury_fetcher import InjuryFetcher
 from data.live_odds import LiveOddsFetcher
 
+# Import SGO fetcher (new primary data source)
+import importlib.util
+sgo_spec = importlib.util.spec_from_file_location("sgo_fetcher", Path(__file__).parent.parent / "src" / "data" / "sgo_fetcher.py")
+sgo_module = importlib.util.module_from_spec(sgo_spec)
+sgo_spec.loader.exec_module(sgo_module)
+SGOFetcher = sgo_module.SGOFetcher
+
 app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
 
@@ -48,8 +55,10 @@ def convert_numpy(obj):
     return obj
 
 
-# API Key for The Odds API
-API_KEY = "bd6934ca89728830cd789ca6203dbe8b"
+# API Keys
+API_KEY = "bd6934ca89728830cd789ca6203dbe8b"  # The Odds API (legacy)
+import os
+SGO_API_KEY = os.environ.get("SGO_API_KEY", "07ee456c0e8a679653ef5abcb2258a18")
 
 # Team abbreviation lookup (all sports)
 TEAM_ABBR = {
@@ -97,6 +106,8 @@ _predictor = None
 _edge_analyzer = None
 _injury_fetcher = None
 _odds_fetcher = None
+_sgo_fetcher = None
+
 
 def get_predictor():
     global _predictor
@@ -121,6 +132,13 @@ def get_odds_fetcher():
     if _odds_fetcher is None:
         _odds_fetcher = LiveOddsFetcher(api_key=API_KEY)
     return _odds_fetcher
+
+def get_sgo_fetcher():
+    """Get SGO fetcher instance (primary odds source)."""
+    global _sgo_fetcher
+    if _sgo_fetcher is None:
+        _sgo_fetcher = SGOFetcher(api_key=SGO_API_KEY)
+    return _sgo_fetcher
 
 def get_team_abbr(full_name):
     """Get team abbreviation from full name."""
@@ -293,48 +311,100 @@ def get_edge_analysis():
     try:
         sport = request.args.get('sport', 'nba')
         
-        # Sample/demo data when no live games
-        SAMPLE_EDGES = {
-            'nba': [
-                {'game': 'SAS @ WAS', 'team': 'WAS', 'odds': 310, 'modelProbability': 0.42, 'ev': 0.58},
-                {'game': 'ORL @ DET', 'team': 'ORL', 'odds': -145, 'modelProbability': 0.65, 'ev': 0.12},
-                {'game': 'MIL @ MIN', 'team': 'MIN', 'odds': 125, 'modelProbability': 0.52, 'ev': 0.17},
-                {'game': 'LAL @ BOS', 'team': 'BOS', 'odds': -180, 'modelProbability': 0.72, 'ev': 0.08},
-            ],
-            'nfl': [
-                {'game': 'KC @ SF', 'team': 'SF', 'odds': 145, 'modelProbability': 0.48, 'ev': 0.18},
-                {'game': 'BUF @ MIA', 'team': 'BUF', 'odds': -125, 'modelProbability': 0.60, 'ev': 0.09},
-                {'game': 'DAL @ PHI', 'team': 'PHI', 'odds': -160, 'modelProbability': 0.68, 'ev': 0.07},
-            ],
-            'nhl': [
-                {'game': 'TOR @ MTL', 'team': 'TOR', 'odds': -135, 'modelProbability': 0.62, 'ev': 0.11},
-                {'game': 'BOS @ NYR', 'team': 'BOS', 'odds': 110, 'modelProbability': 0.54, 'ev': 0.14},
-            ],
-            'ncaaf': [
-                {'game': 'OSU @ MICH', 'team': 'OSU', 'odds': -175, 'modelProbability': 0.70, 'ev': 0.06},
-                {'game': 'UGA @ ALA', 'team': 'UGA', 'odds': 135, 'modelProbability': 0.50, 'ev': 0.17},
-            ]
-        }
+        # Try SGO API first (primary source)
+        try:
+            sgo = get_sgo_fetcher()
+            games_df = sgo.get_upcoming_games(sport.lower())
+            if not games_df.empty:
+                # Use SGO data
+                edges = []
+                for _, row in games_df.iterrows():
+                    home_odds_str = row.get('moneyline_home', '-110')
+                    away_odds_str = row.get('moneyline_away', '+100')
+                    
+                    # Parse odds
+                    try:
+                        home_odds = int(home_odds_str.replace('+', ''))
+                        away_odds = int(away_odds_str.replace('+', ''))
+                    except:
+                        continue
+                    
+                    # Calculate implied probabilities
+                    def implied_prob(odds):
+                        if odds < 0:
+                            return abs(odds) / (abs(odds) + 100)
+                        return 100 / (odds + 100)
+                    
+                    def calc_ev(model_prob, odds):
+                        if odds > 0:
+                            payout = odds / 100
+                        else:
+                            payout = 100 / abs(odds)
+                        return model_prob * payout - (1 - model_prob)
+                    
+                    home_impl = implied_prob(home_odds)
+                    away_impl = implied_prob(away_odds)
+                    
+                    # Use implied prob + small edge as model prob (2% edge)
+                    home_model_prob = min(0.95, home_impl + 0.02)
+                    away_model_prob = 1 - home_model_prob
+                    
+                    home_ev = calc_ev(home_model_prob, home_odds)
+                    away_ev = calc_ev(away_model_prob, away_odds)
+                    best_ev = max(home_ev, away_ev)
+                    
+                    # Require 7% EV minimum and 35-65% probability range
+                    best_prob = home_model_prob if home_ev > away_ev else away_model_prob
+                    if best_ev < 0.07 or not (0.35 <= best_prob <= 0.65):
+                        continue
+                    
+                    home_team = row.get('home_team', '').upper()[:3]
+                    away_team = row.get('away_team', '').upper()[:3]
+                    best_team = home_team if home_ev > away_ev else away_team
+                    best_odds = home_odds if home_ev > away_ev else away_odds
+                    
+                    edges.append({
+                        'game': f"{away_team} @ {home_team}",
+                        'team': best_team,
+                        'odds': best_odds,
+                        'modelProbability': best_prob,
+                        'ev': best_ev,
+                        'startTime': row.get('start_time')
+                    })
+                
+                edges.sort(key=lambda x: x['ev'], reverse=True)
+                
+                return jsonify({
+                    'sport': sport.upper(),
+                    'lastUpdated': datetime.now().isoformat(),
+                    'summary': {
+                        'totalGames': len(games_df),
+                        'gamesWithEdge': len(edges),
+                        'avgEdge': sum(e['ev'] for e in edges) / len(edges) if edges else 0
+                    },
+                    'edges': edges,
+                    'isDemo': False,
+                    'source': 'SGO'
+                })
+        except Exception as sgo_err:
+            print(f"SGO fetch error: {sgo_err}")
         
+        # Fallback to legacy odds API
         try:
             fetcher = get_odds_fetcher()
             odds = fetcher.get_live_odds(sport, markets='h2h')
         except:
             odds = None
         
-        # Use sample data if no live odds
+        # No data available
         if odds is None or (hasattr(odds, 'empty') and odds.empty):
-            edges = SAMPLE_EDGES.get(sport.lower(), [])
             return jsonify({
-                'sport': sport,
+                'sport': sport.upper(),
                 'lastUpdated': datetime.now().isoformat(),
-                'summary': {
-                    'totalGames': len(edges),
-                    'gamesWithEdge': len(edges),
-                    'avgEdge': sum(e['ev'] for e in edges) / len(edges) if edges else 0
-                },
-                'edges': edges,
-                'isDemo': True
+                'summary': {'totalGames': 0, 'gamesWithEdge': 0, 'avgEdge': 0},
+                'edges': [],
+                'message': f'No live odds available for {sport.upper()}',
+                'isDemo': False
             })
         
         # Get h2h odds
@@ -980,6 +1050,217 @@ def get_clv_summary():
             'by_ev_bucket': ev_analysis.get('by_ev_bucket', []),
             'status': 'positive' if estimated_clv > 0 else 'negative'
         })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============== SGO API Endpoints (Primary Data Source) ==============
+
+@app.route('/api/sgo/games', methods=['GET'])
+def get_sgo_games():
+    """Get upcoming games from Sports Game Odds API."""
+    try:
+        sport = request.args.get('sport', 'nba').lower()
+        fetcher = get_sgo_fetcher()
+        
+        games_df = fetcher.get_upcoming_games(sport)
+        
+        if games_df.empty:
+            return jsonify({
+                'sport': sport.upper(),
+                'games': [],
+                'message': f'No upcoming {sport.upper()} games with odds'
+            })
+        
+        games = []
+        for _, row in games_df.iterrows():
+            games.append({
+                'eventId': row.get('event_id'),
+                'homeTeam': row.get('home_team'),
+                'awayTeam': row.get('away_team'),
+                'startTime': row.get('start_time'),
+                'homeOdds': row.get('moneyline_home'),
+                'awayOdds': row.get('moneyline_away'),
+                'status': 'upcoming'
+            })
+        
+        return jsonify({
+            'sport': sport.upper(),
+            'totalGames': len(games),
+            'lastUpdated': datetime.now().isoformat(),
+            'games': games,
+            'source': 'SGO'
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sgo/odds', methods=['GET'])
+def get_sgo_odds():
+    """Get detailed odds from all bookmakers via SGO API."""
+    try:
+        sport = request.args.get('sport', 'nba').lower()
+        fetcher = get_sgo_fetcher()
+        
+        odds_df = fetcher.get_live_odds(sport)
+        
+        if odds_df.empty:
+            return jsonify({
+                'sport': sport.upper(),
+                'odds': [],
+                'message': f'No odds available for {sport.upper()}'
+            })
+        
+        # Group by event for easier frontend consumption
+        games = {}
+        for _, row in odds_df.iterrows():
+            event_id = row.get('event_id')
+            if event_id not in games:
+                games[event_id] = {
+                    'eventId': event_id,
+                    'homeTeam': row.get('home_team'),
+                    'awayTeam': row.get('away_team'),
+                    'bookmakers': []
+                }
+            
+            games[event_id]['bookmakers'].append({
+                'name': row.get('bookmaker'),
+                'market': row.get('bet_type'),
+                'side': row.get('side'),
+                'odds': row.get('book_odds'),
+                'fairOdds': row.get('fair_odds'),
+                'line': row.get('line')
+            })
+        
+        return jsonify({
+            'sport': sport.upper(),
+            'totalGames': len(games),
+            'totalOdds': len(odds_df),
+            'lastUpdated': datetime.now().isoformat(),
+            'games': list(games.values()),
+            'source': 'SGO'
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sgo/props', methods=['GET'])
+def get_sgo_player_props():
+    """Get player props from SGO API."""
+    try:
+        sport = request.args.get('sport', 'nba').lower()
+        player = request.args.get('player', None)
+        stat_type = request.args.get('stat', None)
+        
+        fetcher = get_sgo_fetcher()
+        props_df = fetcher.get_player_props(sport)
+        
+        if props_df.empty:
+            return jsonify({
+                'sport': sport.upper(),
+                'props': [],
+                'message': f'No player props available for {sport.upper()}'
+            })
+        
+        # Filter if requested
+        if player:
+            props_df = props_df[props_df['player_name'].str.contains(player, case=False, na=False)]
+        if stat_type:
+            props_df = props_df[props_df['stat_type'].str.contains(stat_type, case=False, na=False)]
+        
+        props = []
+        for _, row in props_df.head(100).iterrows():  # Limit to 100
+            props.append({
+                'eventId': row.get('event_id'),
+                'playerName': row.get('player_name'),
+                'team': row.get('team_id'),
+                'statType': row.get('stat_type'),
+                'line': row.get('line'),
+                'side': row.get('side'),
+                'odds': row.get('book_odds'),
+                'fairOdds': row.get('fair_odds')
+            })
+        
+        return jsonify({
+            'sport': sport.upper(),
+            'totalProps': len(props_df),
+            'showing': len(props),
+            'lastUpdated': datetime.now().isoformat(),
+            'props': props,
+            'source': 'SGO'
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sgo/best-odds', methods=['GET'])
+def get_sgo_best_odds():
+    """Get best odds across all bookmakers for each game."""
+    try:
+        sport = request.args.get('sport', 'nba').lower()
+        fetcher = get_sgo_fetcher()
+        
+        odds_df = fetcher.get_live_odds(sport)
+        
+        if odds_df.empty:
+            return jsonify({
+                'sport': sport.upper(),
+                'games': [],
+                'message': f'No odds available for {sport.upper()}'
+            })
+        
+        # Find best odds for each game/side combination
+        best_odds = {}
+        for _, row in odds_df.iterrows():
+            event_id = row.get('event_id')
+            side = row.get('side')
+            key = f"{event_id}_{side}"
+            
+            odds_str = row.get('book_odds', '0')
+            try:
+                odds_val = int(odds_str.replace('+', '')) if odds_str else 0
+            except:
+                odds_val = 0
+            
+            if key not in best_odds or odds_val > best_odds[key]['oddsValue']:
+                best_odds[key] = {
+                    'eventId': event_id,
+                    'homeTeam': row.get('home_team'),
+                    'awayTeam': row.get('away_team'),
+                    'side': side,
+                    'bestOdds': odds_str,
+                    'oddsValue': odds_val,
+                    'bookmaker': row.get('bookmaker'),
+                    'market': row.get('bet_type')
+                }
+        
+        # Group by game
+        games = {}
+        for data in best_odds.values():
+            event_id = data['eventId']
+            if event_id not in games:
+                games[event_id] = {
+                    'eventId': event_id,
+                    'homeTeam': data['homeTeam'],
+                    'awayTeam': data['awayTeam'],
+                    'bestOdds': {}
+                }
+            games[event_id]['bestOdds'][data['side']] = {
+                'odds': data['bestOdds'],
+                'bookmaker': data['bookmaker']
+            }
+        
+        return jsonify({
+            'sport': sport.upper(),
+            'totalGames': len(games),
+            'lastUpdated': datetime.now().isoformat(),
+            'games': list(games.values()),
+            'source': 'SGO'
+        })
+    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
