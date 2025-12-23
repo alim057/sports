@@ -481,6 +481,10 @@ async function loadPerformance() {
         document.getElementById('roi-card').classList.toggle('positive', roi >= 0);
         document.getElementById('roi-card').classList.toggle('negative', roi < 0);
 
+        // Update Bankroll
+        const bankroll = perf.current_bankroll || 100.00;
+        document.getElementById('bankroll').textContent = `$${bankroll.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
         // Load performance history chart
         loadPerformanceChart();
 
