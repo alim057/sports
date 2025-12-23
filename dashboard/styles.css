@@ -344,6 +344,25 @@ body {
     margin-top: var(--spacing-sm);
     font-size: 0.8rem;
     color: var(--text-muted);
+    justify-content: space-between;
+}
+
+.bet-type-badge {
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.bet-type-moneyline {
+    background: rgba(99, 102, 241, 0.2);
+    color: var(--accent-primary);
+}
+
+.bet-type-spread {
+    background: rgba(245, 158, 11, 0.2);
+    color: var(--warning);
 }
 
 /* Modal */

@@ -147,6 +147,7 @@ async function loadAllBets() {
     const sports = ['nba', 'nfl', 'nhl', 'ncaaf'];
     allBets = [];
 
+    // Fetch moneyline edges
     for (const sport of sports) {
         try {
             const response = await fetch(`${API_BASE}/api/edge-analysis?sport=${sport}`);
@@ -162,7 +163,27 @@ async function loadAllBets() {
                 });
             }
         } catch (e) {
-            console.log(`${sport} error:`, e);
+            console.log(`${sport} moneyline error:`, e);
+        }
+    }
+
+    // Fetch spread edges
+    for (const sport of sports) {
+        try {
+            const response = await fetch(`${API_BASE}/api/spread-analysis?sport=${sport}`);
+            const data = await response.json();
+
+            if (data.edges) {
+                data.edges.forEach(edge => {
+                    allBets.push({
+                        ...edge,
+                        sport: sport.toUpperCase(),
+                        betType: 'spread'
+                    });
+                });
+            }
+        } catch (e) {
+            console.log(`${sport} spread error:`, e);
         }
     }
 
@@ -224,6 +245,10 @@ function renderBets(bets) {
 
     container.innerHTML = bets.map((bet, idx) => {
         const fullTeamName = getTeamName(bet.team, bet.sport);
+        const spreadInfo = bet.betType === 'spread' && bet.spread !== undefined
+            ? ` (${bet.spread > 0 ? '+' : ''}${bet.spread})`
+            : '';
+        const betTypeClass = bet.betType === 'spread' ? 'bet-type-spread' : 'bet-type-moneyline';
         return `
         <div class="bet-card ${bet.ev > 0.05 ? 'strong-edge' : ''}" onclick="showBetDetail(${idx})">
             <div class="bet-card-header">
@@ -232,12 +257,12 @@ function renderBets(bets) {
             </div>
             <div class="bet-matchup">${bet.game}</div>
             <div class="bet-pick">
-                <span class="bet-pick-team">${fullTeamName}</span>
+                <span class="bet-pick-team">${fullTeamName}${spreadInfo}</span>
                 <span class="bet-pick-odds">${formatOdds(bet.odds)}</span>
             </div>
             <div class="bet-meta">
-                <span>Win Prob: ${(bet.modelProbability * 100).toFixed(0)}%</span>
-                <span>${bet.betType}</span>
+                <span>${bet.betType === 'spread' ? 'Cover Prob' : 'Win Prob'}: ${(bet.modelProbability * 100).toFixed(0)}%</span>
+                <span class="bet-type-badge ${betTypeClass}">${bet.betType}</span>
             </div>
         </div>
     `}).join('');

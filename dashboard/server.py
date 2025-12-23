@@ -382,6 +382,109 @@ def get_edge_analysis():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/spread-analysis', methods=['GET'])
+def get_spread_analysis():
+    """Get spread betting edge analysis for today's games."""
+    try:
+        sport = request.args.get('sport', 'nba')
+        
+        try:
+            fetcher = get_odds_fetcher()
+            odds = fetcher.get_live_odds(sport, markets='spreads')
+        except:
+            odds = None
+        
+        if odds is None or (hasattr(odds, 'empty') and odds.empty):
+            return jsonify({
+                'sport': sport,
+                'lastUpdated': datetime.now().isoformat(),
+                'summary': {'totalGames': 0, 'gamesWithEdge': 0, 'avgEdge': 0},
+                'edges': [],
+                'isDemo': True
+            })
+        
+        # Get spread odds
+        spreads = odds[odds['market'] == 'spreads'].groupby(['home_team', 'away_team']).agg({
+            'home_odds': 'mean',
+            'away_odds': 'mean',
+            'home_point': 'mean',  # The spread value
+            'away_point': 'mean'
+        }).reset_index()
+        
+        edges = []
+        
+        for _, row in spreads.iterrows():
+            home = row['home_team']
+            away = row['away_team']
+            home_abbr = get_team_abbr(home)
+            away_abbr = get_team_abbr(away)
+            home_odds = int(row['home_odds'])
+            away_odds = int(row['away_odds'])
+            home_spread = row.get('home_point', 0)
+            away_spread = row.get('away_point', 0)
+            
+            # Skip if odds aren't valid moneyline format (should be -110 style for spreads)
+            if not validate_moneyline_odds(home_odds, away_odds):
+                continue
+            
+            # Simple spread model: assume slight edge based on spread size
+            # If home is heavily favored (negative spread), model gives them higher cover prob
+            def spread_cover_prob(spread, is_home=True):
+                # Larger spreads = lower cover probability
+                base = 0.50  # Market assumed fair
+                edge = 0.03  # Our assumed edge
+                home_boost = 0.02 if is_home else 0
+                return min(0.65, max(0.35, base + edge + home_boost))
+            
+            home_cover_prob = spread_cover_prob(home_spread, True)
+            away_cover_prob = spread_cover_prob(away_spread, False)
+            
+            # Calculate EV for each side
+            def calc_spread_ev(prob, odds):
+                if odds > 0:
+                    payout = odds / 100
+                else:
+                    payout = 100 / abs(odds)
+                return prob * payout - (1 - prob)
+            
+            home_ev = calc_spread_ev(home_cover_prob, home_odds)
+            away_ev = calc_spread_ev(away_cover_prob, away_odds)
+            best_ev = max(home_ev, away_ev)
+            
+            if best_ev > 0.02:
+                best_team = home_abbr if home_ev > away_ev else away_abbr
+                best_odds = home_odds if home_ev > away_ev else away_odds
+                best_prob = home_cover_prob if home_ev > away_ev else away_cover_prob
+                best_spread = home_spread if home_ev > away_ev else away_spread
+                
+                edges.append({
+                    'game': f"{away_abbr} @ {home_abbr}",
+                    'team': best_team,
+                    'spread': best_spread,
+                    'odds': best_odds,
+                    'modelProbability': best_prob,
+                    'ev': best_ev,
+                    'betType': 'spread'
+                })
+        
+        # Sort by EV
+        edges.sort(key=lambda x: x['ev'], reverse=True)
+        
+        return jsonify({
+            'sport': sport,
+            'lastUpdated': datetime.now().isoformat(),
+            'summary': {
+                'totalGames': len(spreads),
+                'gamesWithEdge': len(edges),
+                'avgEdge': sum(e['ev'] for e in edges) / len(edges) if edges else 0
+            },
+            'edges': edges
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/best-odds', methods=['GET'])
 def get_best_odds():
     """Get best available odds across bookmakers."""
