@@ -226,8 +226,13 @@ function applyFilters() {
         return true;
     });
 
+    // Limit to top 15 best bets (already sorted by EV)
+    const totalBeforeLimit = filtered.length;
+    filtered = filtered.slice(0, 15);
+
     // Update summary
-    document.getElementById('total-edges').textContent = filtered.length;
+    const countText = totalBeforeLimit > 15 ? `15 of ${totalBeforeLimit}` : `${filtered.length}`;
+    document.getElementById('total-edges').textContent = countText;
     const avgEv = filtered.length > 0
         ? filtered.reduce((sum, b) => sum + b.ev, 0) / filtered.length
         : 0;
@@ -280,6 +285,9 @@ function renderBets(bets) {
         if (bet.betType === 'spread') probLabel = 'Cover Prob';
         if (bet.betType === 'total') probLabel = 'Hit Prob';
 
+        // Format game time
+        const gameTime = bet.startTime ? formatGameTime(bet.startTime) : '';
+
         return `
         <div class="bet-card ${bet.ev > 0.05 ? 'strong-edge' : ''}" onclick="showBetDetail(${idx})">
             <div class="bet-card-header">
@@ -287,6 +295,7 @@ function renderBets(bets) {
                 <span class="bet-ev">+${(bet.ev * 100).toFixed(1)}%</span>
             </div>
             <div class="bet-matchup">${bet.game}</div>
+            ${gameTime ? `<div class="bet-time">📅 ${gameTime}</div>` : ''}
             <div class="bet-pick">
                 <span class="bet-pick-team">${fullTeamName}${spreadInfo}</span>
                 <span class="bet-pick-odds">${formatOdds(bet.odds)}</span>
@@ -475,6 +484,9 @@ async function loadPerformance() {
         // Load performance history chart
         loadPerformanceChart();
 
+        // Load recent bets table
+        loadRecentBets();
+
     } catch (error) {
         console.error('Failed to load performance:', error);
     }
@@ -570,6 +582,41 @@ async function loadPerformanceChart() {
 
     } catch (error) {
         console.error('Failed to load performance chart:', error);
+    }
+}
+
+async function loadRecentBets() {
+    const tableBody = document.getElementById('recent-bets-body');
+    if (!tableBody) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/api/recent-bets`);
+        const data = await response.json();
+
+        if (!data.bets || data.bets.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="7">No betting history yet</td></tr>';
+            return;
+        }
+
+        tableBody.innerHTML = data.bets.map(bet => {
+            const resultClass = bet.result === 'WIN' ? 'win' : bet.result === 'LOSS' ? 'loss' : 'pending';
+            const payoutClass = bet.payout && bet.payout.startsWith('+') ? 'positive' : 'negative';
+            return `
+                <tr>
+                    <td>${bet.date}</td>
+                    <td>${bet.sport}</td>
+                    <td>${bet.game}</td>
+                    <td><strong>${bet.team}</strong></td>
+                    <td><span class="badge ${resultClass}">${bet.result}</span></td>
+                    <td>${formatOdds(bet.odds)}</td>
+                    <td class="${payoutClass}">${bet.payout || '-'}</td>
+                </tr>
+            `;
+        }).join('');
+
+    } catch (error) {
+        console.error('Failed to load recent bets:', error);
+        tableBody.innerHTML = '<tr><td colspan="7">Failed to load betting history</td></tr>';
     }
 }
 

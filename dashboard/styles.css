@@ -317,6 +317,12 @@ body {
 .bet-matchup {
     font-size: 1.1rem;
     font-weight: 600;
+    margin-bottom: var(--spacing-xs);
+}
+
+.bet-time {
+    font-size: 0.75rem;
+    color: var(--text-muted);
     margin-bottom: var(--spacing-sm);
 }
 

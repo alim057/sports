@@ -304,7 +304,8 @@ def get_edge_analysis():
         # Get h2h odds
         h2h = odds[odds['market'] == 'h2h'].groupby(['home_team', 'away_team']).agg({
             'home_odds': 'mean',
-            'away_odds': 'mean'
+            'away_odds': 'mean',
+            'commence_time': 'first'
         }).reset_index()
         
         edges = []
@@ -361,7 +362,8 @@ def get_edge_analysis():
                     'team': best_team,
                     'odds': best_odds,
                     'modelProbability': best_prob,
-                    'ev': best_ev
+                    'ev': best_ev,
+                    'startTime': row.get('commence_time', None)
                 })
         
         # Sort by EV
@@ -691,6 +693,44 @@ def get_performance_history():
             'totalProfit': round(cumulative, 2),
             'totalBets': len(resolved)
         })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/recent-bets', methods=['GET'])
+def get_recent_bets():
+    """Get recent bets for the Performance tab table."""
+    try:
+        from pathlib import Path
+        import pandas as pd
+        
+        csv_path = Path("./data")
+        csv_files = list(csv_path.glob("best_bets_*.csv"))
+        
+        if not csv_files:
+            return jsonify({'bets': [], 'message': 'No bet history found'})
+        
+        # Load all CSVs
+        all_bets = pd.concat([pd.read_csv(f) for f in csv_files], ignore_index=True)
+        
+        # Sort by date descending and take recent 20
+        all_bets = all_bets.sort_values('date', ascending=False).head(20)
+        
+        bets = []
+        for _, row in all_bets.iterrows():
+            payout = str(row.get('payout', '')) if pd.notna(row.get('payout')) else ''
+            bets.append({
+                'date': row.get('date', ''),
+                'sport': row.get('sport', ''),
+                'game': row.get('game', ''),
+                'team': row.get('team', ''),
+                'result': row.get('result', 'PENDING'),
+                'odds': row.get('odds', ''),
+                'payout': payout
+            })
+        
+        return jsonify({'bets': bets})
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
