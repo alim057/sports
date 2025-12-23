@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
 import sys
+import joblib
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -27,6 +28,13 @@ from nba_api.stats.static import teams as nba_teams_static
 
 class AdvancedPredictor:
     """Advanced prediction system combining team and player analysis."""
+    
+    # XGBoost feature names (must match training)
+    MONEYLINE_FEATURES = [
+        'pts_diff_l10', 'def_diff_l10', 'win_rate_diff',
+        'fg_pct_diff', 'reb_diff', 'ast_diff', 'tov_diff',
+        'home_win_l10', 'away_win_l10'
+    ]
     
     def __init__(
         self,
@@ -57,16 +65,93 @@ class AdvancedPredictor:
         self.team_features = TeamFeatureEngine()
         self.player_features = PlayerFeatureEngine(season)
         
-        # Model and evaluator
+        # Legacy model and evaluator
         self.predictor = GamePredictor(model_path=model_path)
         self.evaluator = BettingEvaluator(
             min_ev_threshold=min_ev_threshold,
             bankroll=bankroll
         )
         
+        # Load XGBoost models
+        self.xgb_models = self._load_xgboost_models()
+        
         # Team lookup cache
         self._teams = {t['abbreviation']: t for t in nba_teams_static.get_teams()}
         self._team_stats_cache = {}
+    
+    def _load_xgboost_models(self) -> Dict:
+        """Load trained XGBoost models if available."""
+        models = {}
+        model_dir = Path(__file__).parent.parent.parent / "models"
+        
+        for name in ['moneyline', 'spread', 'totals']:
+            path = model_dir / f"nba_{name}_xgb.joblib"
+            if path.exists():
+                try:
+                    data = joblib.load(path)
+                    models[name] = data
+                    print(f"Loaded XGBoost {name} model")
+                except Exception as e:
+                    print(f"Warning: Could not load {name} model: {e}")
+        
+        if not models:
+            print("No XGBoost models found, using heuristic fallback")
+        
+        return models
+    
+    def _build_xgb_features(self, home_stats: pd.Series, away_stats: pd.Series) -> Optional[Dict]:
+        """
+        Build feature dictionary for XGBoost model from team stats.
+        
+        Maps the team stats (from get_team_recent_stats) to the feature names
+        expected by the trained XGBoost models.
+        """
+        try:
+            # Get raw stats with defaults
+            home_pts = home_stats.get('PTS_L10', home_stats.get('PTS_L5', 105))
+            away_pts = away_stats.get('PTS_L10', away_stats.get('PTS_L5', 105))
+            home_win = home_stats.get('HOME_WIN_RATE', 0.5)
+            away_win = away_stats.get('AWAY_WIN_RATE', 0.5)
+            
+            # For stats we don't have directly, use defaults
+            # In training, we had access to full game logs. Here we approximate.
+            home_opp_pts = 105  # Default opponent pts allowed
+            away_opp_pts = 105
+            
+            features = {
+                # Scoring
+                'home_pts_l10': home_pts,
+                'away_pts_l10': away_pts,
+                'pts_diff_l10': home_pts - away_pts,
+                
+                # Defense (approximated)
+                'home_opp_pts_l10': home_opp_pts,
+                'away_opp_pts_l10': away_opp_pts,
+                'def_diff_l10': away_opp_pts - home_opp_pts,
+                
+                # Win rates
+                'home_win_l10': home_win,
+                'away_win_l10': away_win,
+                'win_rate_diff': home_win - away_win,
+                
+                # Other stats (use small values to avoid model issues)
+                'fg_pct_diff': 0.0,
+                'reb_diff': 0.0,
+                'ast_diff': 0.0,
+                'tov_diff': 0.0,
+                
+                # Totals features
+                'combined_pts_l10': home_pts + away_pts,
+                'combined_def_l10': home_opp_pts + away_opp_pts,
+                'home_fg_pct_l10': 0.45,
+                'away_fg_pct_l10': 0.45,
+            }
+            
+            return features
+            
+        except Exception as e:
+            print(f"Feature building failed: {e}")
+            return None
     
     def get_team_id(self, team_abbr: str) -> Optional[int]:
         """Get team ID from abbreviation."""
@@ -196,22 +281,26 @@ class AdvancedPredictor:
             print(f"Warning: Injury fetch error: {e}")
             injury_analysis = {'net_impact_prob': 0}
 
-        # Make prediction (using trained model if available)
+        # Make prediction using XGBoost model if available
         home_win_prob = None
-        if self.predictor.model is not None and self.predictor.feature_names is not None:
+        model_used = 'heuristic'
+        
+        if 'moneyline' in self.xgb_models:
             try:
-                X = pd.DataFrame([team_feats])
-                # Align features with model's expected feature names
-                available_features = set(X.columns) & set(self.predictor.feature_names)
-                if len(available_features) >= len(self.predictor.feature_names) * 0.5:
-                    # Reindex to match expected features, fill missing with 0
-                    X_aligned = X.reindex(columns=self.predictor.feature_names, fill_value=0)
-                    probs = self.predictor.model.predict_proba(X_aligned)[0]
-                    home_win_prob = probs[1]
-                else:
-                    print(f"Warning: Only {len(available_features)}/{len(self.predictor.feature_names)} features available")
+                # Build XGBoost feature vector from team stats
+                xgb_features = self._build_xgb_features(home_stats, away_stats)
+                
+                if xgb_features is not None:
+                    model_data = self.xgb_models['moneyline']
+                    model = model_data['model']
+                    feature_names = model_data.get('features', self.MONEYLINE_FEATURES)
+                    
+                    # Create DataFrame with correct feature order
+                    X = pd.DataFrame([xgb_features])[feature_names]
+                    home_win_prob = model.predict_proba(X)[0][1]
+                    model_used = 'xgboost'
             except Exception as e:
-                print(f"Model prediction failed, using heuristic: {e}")
+                print(f"XGBoost prediction failed: {e}")
         
         # Fallback: simple heuristic based on features
         if home_win_prob is None:
@@ -242,6 +331,7 @@ class AdvancedPredictor:
             'away_win_probability': 1 - home_win_prob_adjusted,
             'predicted_winner': home_team if home_win_prob_adjusted > 0.5 else away_team,
             'confidence': max(home_win_prob_adjusted, 1 - home_win_prob_adjusted),
+            'model_used': model_used,
             'team_analysis': {
                 'home_pts_l5': home_stats.get('PTS_L5', 0),
                 'away_pts_l5': away_stats.get('PTS_L5', 0),

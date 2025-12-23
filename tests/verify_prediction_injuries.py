@@ -7,9 +7,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from models.advanced_predictor import AdvancedPredictor
 
-def test_prediction_with_injuries():
+def test_prediction_with_xgboost():
     print("Initializing AdvancedPredictor...")
     predictor = AdvancedPredictor()
+    
+    print(f"\nXGBoost models loaded: {list(predictor.xgb_models.keys())}")
     
     home_team = 'LAL'
     away_team = 'GSW'
@@ -20,6 +22,7 @@ def test_prediction_with_injuries():
     print("\nPrediction Result:")
     print(f"Home Win Prob (Adjusted): {result['home_win_probability']:.1%}")
     print(f"Base Prob (Before Adjustment): {result.get('base_prob', 'N/A')}")
+    print(f"Model Used: {result.get('model_used', 'unknown')}")
     
     injury_analysis = result.get('injury_analysis', {})
     print("\nInjury Analysis:")
@@ -49,4 +52,4 @@ def test_prediction_with_injuries():
         print("\nFAILURE: Injury analysis missing from result.")
 
 if __name__ == "__main__":
-    test_prediction_with_injuries()
+    test_prediction_with_xgboost()
