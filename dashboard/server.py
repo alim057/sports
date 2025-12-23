@@ -128,14 +128,50 @@ def get_team_abbr(full_name):
 
 def validate_moneyline_odds(home_odds, away_odds):
     """
-    Validate that odds look like American moneyline, not spreads.
-    Spreads are typically small numbers like -6, +3.5
-    Moneyline odds are typically -300 to +900 range (at least abs > 100)
+    Validate that odds are valid American moneyline format.
+    
+    Valid moneyline odds:
+    - Negative: -100 or less (e.g., -110, -150, -300)
+    - Positive: +100 or more (e.g., +110, +150, +300)
+    
+    Invalid (these are spreads, not moneyline):
+    - Between -99 and +99 (e.g., -6, +3.5, -53)
+    
+    Returns:
+        bool: True if valid moneyline odds, False otherwise
     """
-    # Both odds should have absolute value > 100 for moneyline
-    if abs(home_odds) < 100 or abs(away_odds) < 100:
-        return False
+    for odds in [home_odds, away_odds]:
+        if odds is None:
+            return False
+        # Spread values typically range from -35 to +35
+        # Moneyline odds must have absolute value >= 100
+        if -99 <= odds <= 99:
+            print(f"Warning: Invalid moneyline odds {odds} (looks like spread value)")
+            return False
     return True
+
+
+def is_game_upcoming(commence_time_iso):
+    """
+    Check if game is in the future (hasn't started yet).
+    
+    Args:
+        commence_time_iso: ISO format datetime string (e.g., "2025-12-24T19:00:00Z")
+        
+    Returns:
+        bool: True if game is in the future, False if started or invalid
+    """
+    if not commence_time_iso:
+        return False
+    try:
+        from datetime import timezone
+        # Parse ISO format, handling Z suffix  
+        time_str = commence_time_iso.replace('Z', '+00:00')
+        game_time = datetime.fromisoformat(time_str)
+        return game_time > datetime.now(timezone.utc)
+    except Exception as e:
+        print(f"Warning: Could not parse game time '{commence_time_iso}': {e}")
+        return False
 
 
 # ============== Live Data Routes ==============
@@ -322,7 +358,12 @@ def get_edge_analysis():
             if not validate_moneyline_odds(home_odds, away_odds):
                 continue
             
-            # Simple EV calculation without complex predictor
+            # Skip past games
+            commence_time = row.get('commence_time', None)
+            if commence_time and not is_game_upcoming(commence_time):
+                continue
+            
+            # EV calculation using implied probability
             def implied_prob(odds):
                 if odds < 0:
                     return abs(odds) / (abs(odds) + 100)
@@ -339,32 +380,48 @@ def get_edge_analysis():
             home_impl = implied_prob(home_odds)
             away_impl = implied_prob(away_odds)
             
-            # Simple model: assume slight edge over market + home advantage
-            home_model_prob = home_impl + 0.03 + 0.02  # Market + edge + home
-            away_model_prob = away_impl + 0.03
+            # Try to use actual predictor model
+            try:
+                predictor = get_predictor(sport)
+                result = predictor.predict_with_odds(home_abbr, away_abbr, home_odds, away_odds)
+                if 'error' not in result:
+                    home_model_prob = result.get('home_win_probability', home_impl)
+                else:
+                    # Fallback: slight edge over market
+                    home_model_prob = min(0.95, home_impl + 0.02)
+            except Exception as e:
+                # Fallback: slight edge over market + small home advantage
+                home_model_prob = min(0.95, home_impl + 0.02)
             
-            # Normalize
-            total = home_model_prob + away_model_prob
-            home_model_prob /= total
-            away_model_prob /= total
+            away_model_prob = 1 - home_model_prob
             
             home_ev = calc_ev(home_model_prob, home_odds)
             away_ev = calc_ev(away_model_prob, away_odds)
             best_ev = max(home_ev, away_ev)
             
-            if best_ev > 0.02:
-                best_team = home_abbr if home_ev > away_ev else away_abbr
-                best_odds = home_odds if home_ev > away_ev else away_odds
-                best_prob = home_model_prob if home_ev > away_ev else away_model_prob
-                
-                edges.append({
-                    'game': f"{away_abbr} @ {home_abbr}",
-                    'team': best_team,
-                    'odds': best_odds,
-                    'modelProbability': best_prob,
-                    'ev': best_ev,
-                    'startTime': row.get('commence_time', None)
-                })
+            # Determine best side
+            best_team = home_abbr if home_ev > away_ev else away_abbr
+            best_odds = home_odds if home_ev > away_ev else away_odds
+            best_prob = home_model_prob if home_ev > away_ev else away_model_prob
+            
+            # --- PHASE 2 FILTERS ---
+            # 1. Require 7% minimum EV (up from 2%)
+            if best_ev < 0.07:
+                continue
+            
+            # 2. Filter to optimal probability range (35-65%)
+            # Market inefficiencies are most common in this range
+            if not (0.35 <= best_prob <= 0.65):
+                continue
+            
+            edges.append({
+                'game': f"{away_abbr} @ {home_abbr}",
+                'team': best_team,
+                'odds': best_odds,
+                'modelProbability': best_prob,
+                'ev': best_ev,
+                'startTime': row.get('commence_time', None)
+            })
         
         # Sort by EV
         edges.sort(key=lambda x: x['ev'], reverse=True)
@@ -377,8 +434,10 @@ def get_edge_analysis():
                 'gamesWithEdge': len(edges),
                 'avgEdge': sum(e['ev'] for e in edges) / len(edges) if edges else 0
             },
-            'edges': edges
+            'edges': edges,
+            'isDemo': False
         })
+
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -864,6 +923,63 @@ def calculate_parlay():
             'isPositiveEV': parlay_ev > 0
         })
     
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============== Risk Management Routes ==============
+
+@app.route('/api/daily-status', methods=['GET'])
+def get_daily_status():
+    """Check daily betting status and loss limits."""
+    try:
+        tracker = get_bet_tracker()
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        history = tracker.get_bet_history(start_date=today, status='resolved')
+        daily_pl = float(history['profit_loss'].sum()) if len(history) > 0 else 0.0
+        
+        pending = tracker.get_pending_bets()
+        pending_today = len(pending[pending['game_date'] == today]) if len(pending) > 0 else 0
+        
+        DAILY_LOSS_LIMIT = -100.0
+        limit_hit = daily_pl <= DAILY_LOSS_LIMIT
+        
+        return jsonify({
+            'date': today,
+            'resolved_bets': len(history),
+            'pending_bets': pending_today,
+            'profit_loss': round(daily_pl, 2),
+            'daily_loss_limit': DAILY_LOSS_LIMIT,
+            'limit_hit': limit_hit,
+            'can_bet': not limit_hit
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/clv-summary', methods=['GET'])
+def get_clv_summary():
+    """Get CLV (Closing Line Value) statistics."""
+    try:
+        tracker = get_bet_tracker()
+        ev_analysis = tracker.get_ev_analysis()
+        perf = tracker.get_performance_summary()
+        
+        predicted_ev = perf.get('avg_ev', 0) * 100
+        actual_roi = perf.get('roi', 0) * 100
+        estimated_clv = actual_roi - predicted_ev if perf.get('total_bets', 0) > 0 else 0
+        
+        return jsonify({
+            'total_tracked_bets': perf.get('total_bets', 0),
+            'avg_predicted_ev': round(predicted_ev, 2),
+            'actual_roi': round(actual_roi, 2),
+            'estimated_clv': round(estimated_clv, 2),
+            'is_sharp': estimated_clv > 0,
+            'ev_correlation': ev_analysis.get('ev_correlation'),
+            'by_ev_bucket': ev_analysis.get('by_ev_bucket', []),
+            'status': 'positive' if estimated_clv > 0 else 'negative'
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

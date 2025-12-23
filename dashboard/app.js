@@ -139,6 +139,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 
 // Store all bets for filtering
 let allBets = [];
+let demoSports = new Set(); // Track which sports are showing demo data
 
 async function loadAllBets() {
     const container = document.getElementById('bets-container');
@@ -146,6 +147,7 @@ async function loadAllBets() {
 
     const sports = ['nba', 'nfl', 'nhl', 'ncaaf'];
     allBets = [];
+    demoSports.clear();
 
     // Fetch moneyline edges
     for (const sport of sports) {
@@ -153,12 +155,18 @@ async function loadAllBets() {
             const response = await fetch(`${API_BASE}/api/edge-analysis?sport=${sport}`);
             const data = await response.json();
 
+            // Track if this sport is showing demo data
+            if (data.isDemo) {
+                demoSports.add(sport.toUpperCase());
+            }
+
             if (data.edges) {
                 data.edges.forEach(edge => {
                     allBets.push({
                         ...edge,
                         sport: sport.toUpperCase(),
-                        betType: 'moneyline'
+                        betType: 'moneyline',
+                        isDemo: data.isDemo || false
                     });
                 });
             }
@@ -173,12 +181,17 @@ async function loadAllBets() {
             const response = await fetch(`${API_BASE}/api/spread-analysis?sport=${sport}`);
             const data = await response.json();
 
+            if (data.isDemo) {
+                demoSports.add(sport.toUpperCase());
+            }
+
             if (data.edges) {
                 data.edges.forEach(edge => {
                     allBets.push({
                         ...edge,
                         sport: sport.toUpperCase(),
-                        betType: 'spread'
+                        betType: 'spread',
+                        isDemo: data.isDemo || false
                     });
                 });
             }
@@ -193,13 +206,18 @@ async function loadAllBets() {
             const response = await fetch(`${API_BASE}/api/totals-analysis?sport=${sport}`);
             const data = await response.json();
 
+            if (data.isDemo) {
+                demoSports.add(sport.toUpperCase());
+            }
+
             if (data.edges) {
                 data.edges.forEach(edge => {
                     allBets.push({
                         ...edge,
                         sport: sport.toUpperCase(),
                         betType: 'total',
-                        team: `${edge.pick} ${edge.line}`  // Display as "OVER 220.5"
+                        team: `${edge.pick} ${edge.line}`,  // Display as "OVER 220.5"
+                        isDemo: data.isDemo || false
                     });
                 });
             }
@@ -212,6 +230,33 @@ async function loadAllBets() {
     allBets.sort((a, b) => b.ev - a.ev);
 
     applyFilters();
+}
+
+// Render demo data warning banner
+function renderDemoWarning(container) {
+    if (demoSports.size === 0) {
+        // Remove any existing banner
+        const existing = document.querySelector('.demo-warning-banner');
+        if (existing) existing.remove();
+        return;
+    }
+
+    const sportsList = Array.from(demoSports).join(', ');
+    const warningHtml = `
+        <div class="demo-warning-banner">
+            <span class="demo-icon">⚠️</span>
+            <div class="demo-message">
+                <strong>Demo Data Active</strong>
+                <span>No live games for: ${sportsList}. Showing sample predictions - DO NOT bet on these.</span>
+            </div>
+        </div>
+    `;
+
+    // Remove existing banner first
+    const existing = document.querySelector('.demo-warning-banner');
+    if (existing) existing.remove();
+
+    container.insertAdjacentHTML('beforebegin', warningHtml);
 }
 
 function applyFilters() {
@@ -240,7 +285,10 @@ function applyFilters() {
     const uniqueSports = new Set(filtered.map(b => b.sport));
     document.getElementById('total-sports').textContent = uniqueSports.size;
 
+    // Render the bets and demo warning if applicable
+    const container = document.getElementById('bets-container');
     renderBets(filtered);
+    renderDemoWarning(container);
 }
 
 // ============== Helpers ==============

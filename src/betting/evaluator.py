@@ -15,21 +15,25 @@ class BettingEvaluator:
     
     def __init__(
         self,
-        min_ev_threshold: float = 0.02,
+        min_ev_threshold: float = 0.07,
         max_kelly_fraction: float = 0.25,
-        bankroll: float = 1000.0
+        bankroll: float = 1000.0,
+        daily_loss_limit: float = 0.10  # Max 10% of bankroll daily loss
     ):
         """
         Initialize evaluator.
         
         Args:
-            min_ev_threshold: Minimum EV to recommend a bet (default 2%)
+            min_ev_threshold: Minimum EV to recommend a bet (default 7%)
             max_kelly_fraction: Fraction of Kelly criterion to use (default 25%)
             bankroll: Current bankroll for bet sizing
+            daily_loss_limit: Max daily loss as fraction of bankroll (default 10%)
         """
         self.min_ev_threshold = min_ev_threshold
         self.max_kelly_fraction = max_kelly_fraction
         self.bankroll = bankroll
+        self.daily_loss_limit = daily_loss_limit
+        self.daily_loss_amount = bankroll * daily_loss_limit
     
     # ==================== Odds Conversion ====================
     

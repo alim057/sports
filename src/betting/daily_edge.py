@@ -76,7 +76,7 @@ def run_edge_analysis(auto_save: bool = True, stake: float = 50.0):
             # Initialize predictor for this sport
             # Use lower threshold for NFL since model is new/less proven? Or keep same?
             # Keeping same 0.02 (2%) for consistency.
-            predictor = AdvancedPredictor(sport=sport, min_ev_threshold=0.02)
+            predictor = AdvancedPredictor(sport=sport, min_ev_threshold=0.07)
             
             # Fetch Schedule
             print(f"  Fetching {sport} schedule...")
@@ -142,7 +142,7 @@ def run_edge_analysis(auto_save: bool = True, stake: float = 50.0):
                 print(f"  Moneyline: {home_abbr} {home_prob:.1%} ({home_odds:+d}) | {away_abbr} {away_prob:.1%} ({away_odds:+d})")
                 
                 best_ev = max(ba.get('home_ev', 0), ba.get('away_ev', 0))
-                if best_ev > 0.02:
+                if best_ev > 0.07:
                     best_team = ba['best_bet']
                     print(f"  >>> EDGE: {best_team} (+{best_ev:.1%} EV) [{model_used}]")
                     

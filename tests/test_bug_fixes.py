@@ -228,5 +228,53 @@ class TestParlayCalculations:
         assert 3.6 < combined < 3.7
 
 
+class TestDataIntegrity:
+    """Tests for Phase 1 data integrity fixes."""
+    
+    def test_game_time_filter_future(self):
+        """Future games should pass the filter."""
+        from server import is_game_upcoming
+        
+        # Game in the future should be included
+        future = "2099-12-25T12:00:00Z"
+        assert is_game_upcoming(future) == True
+    
+    def test_game_time_filter_past(self):
+        """Past games should fail the filter."""
+        from server import is_game_upcoming
+        
+        # Game in the past should be excluded
+        past = "2020-01-01T12:00:00Z"
+        assert is_game_upcoming(past) == False
+    
+    def test_game_time_filter_none(self):
+        """None/empty time should fail the filter."""
+        from server import is_game_upcoming
+        
+        assert is_game_upcoming(None) == False
+        assert is_game_upcoming("") == False
+    
+    def test_odds_validation_rejects_spreads(self):
+        """Small numbers like -53 should be rejected as spread values."""
+        from server import validate_moneyline_odds
+        
+        # -53 is a spread value mistakenly stored as odds
+        assert validate_moneyline_odds(-53, +100) == False
+        assert validate_moneyline_odds(-150, +53) == False
+        assert validate_moneyline_odds(-6, +6) == False
+    
+    def test_performance_returns_is_demo_flag(self):
+        """Performance endpoint should include isDemo flag."""
+        from server import app
+        
+        with app.test_client() as client:
+            response = client.get('/api/performance')
+            data = response.get_json()
+            perf = data.get('performance', {})
+            # isDemo should be present in response
+            assert 'isDemo' in perf
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+

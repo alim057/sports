@@ -625,6 +625,55 @@ body {
     border-radius: var(--radius-lg);
 }
 
+/* Demo Data Warning Banner */
+.demo-warning-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(245, 158, 11, 0.05));
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--spacing-lg);
+    animation: demoPulse 2s ease-in-out infinite;
+}
+
+.demo-warning-banner .demo-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.demo-warning-banner .demo-message {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.demo-warning-banner .demo-message strong {
+    color: var(--warning);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.demo-warning-banner .demo-message span {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+@keyframes demoPulse {
+
+    0%,
+    100% {
+        opacity: 1;
+        border-color: var(--warning);
+    }
+
+    50% {
+        opacity: 0.8;
+        border-color: rgba(245, 158, 11, 0.5);
+    }
+}
+
 /* Evaluator Styles */
 .evaluator-form {
     background: var(--bg-card);
