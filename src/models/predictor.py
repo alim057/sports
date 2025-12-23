@@ -57,15 +57,30 @@ class GamePredictor:
     
     def load_model(self, model_path: str):
         """Load a specific model file."""
-        model_data = joblib.load(model_path)
-        
-        self.model = model_data['model']
-        self.feature_names = model_data['feature_names']
-        self.model_type = model_data.get('model_type', 'unknown')
-        
-        print(f"Loaded model: {Path(model_path).name}")
-        print(f"Model type: {self.model_type}")
-        print(f"Features: {len(self.feature_names)}")
+        try:
+            model_data = joblib.load(model_path)
+            
+            # Handle different model storage formats
+            if isinstance(model_data, dict):
+                self.model = model_data.get('model', model_data.get('classifier'))
+                self.feature_names = model_data.get('feature_names', model_data.get('features'))
+                self.model_type = model_data.get('model_type', 'unknown')
+            else:
+                # Model might be saved directly, not in a dict
+                self.model = model_data
+                self.feature_names = None
+                self.model_type = 'raw'
+            
+            print(f"Loaded model: {Path(model_path).name}")
+            print(f"Model type: {self.model_type}")
+            if self.feature_names:
+                print(f"Features: {len(self.feature_names)}")
+            else:
+                print("Features: Using model's internal feature names")
+        except Exception as e:
+            print(f"Warning: Could not load model {model_path}: {e}")
+            self.model = None
+            self.feature_names = None
     
     def predict_game(
         self,

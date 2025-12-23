@@ -188,14 +188,24 @@ class AdvancedPredictor:
                     print(f"Warning: Player feature error: {e}")
         
         # Make prediction (using trained model if available)
-        if self.predictor.model is not None:
-            X = pd.DataFrame([team_feats])
-            probs = self.predictor.model.predict_proba(
-                X[self.predictor.feature_names].fillna(0)
-            )[0]
-            home_win_prob = probs[1]
-        else:
-            # Fallback: simple heuristic based on features
+        home_win_prob = None
+        if self.predictor.model is not None and self.predictor.feature_names is not None:
+            try:
+                X = pd.DataFrame([team_feats])
+                # Align features with model's expected feature names
+                available_features = set(X.columns) & set(self.predictor.feature_names)
+                if len(available_features) >= len(self.predictor.feature_names) * 0.5:
+                    # Reindex to match expected features, fill missing with 0
+                    X_aligned = X.reindex(columns=self.predictor.feature_names, fill_value=0)
+                    probs = self.predictor.model.predict_proba(X_aligned)[0]
+                    home_win_prob = probs[1]
+                else:
+                    print(f"Warning: Only {len(available_features)}/{len(self.predictor.feature_names)} features available")
+            except Exception as e:
+                print(f"Model prediction failed, using heuristic: {e}")
+        
+        # Fallback: simple heuristic based on features
+        if home_win_prob is None:
             home_win_prob = 0.5 + (
                 team_feats.get('PTS_DIFF_L5', 0) * 0.01 +
                 team_feats.get('WIN_RATE_DIFF', 0) * 0.3 +

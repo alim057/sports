@@ -51,8 +51,9 @@ def convert_numpy(obj):
 # API Key for The Odds API
 API_KEY = "bd6934ca89728830cd789ca6203dbe8b"
 
-# Team abbreviation lookup
+# Team abbreviation lookup (all sports)
 TEAM_ABBR = {
+    # NBA
     'Atlanta Hawks': 'ATL', 'Boston Celtics': 'BOS', 'Brooklyn Nets': 'BKN',
     'Charlotte Hornets': 'CHA', 'Chicago Bulls': 'CHI', 'Cleveland Cavaliers': 'CLE',
     'Dallas Mavericks': 'DAL', 'Denver Nuggets': 'DEN', 'Detroit Pistons': 'DET',
@@ -62,7 +63,33 @@ TEAM_ABBR = {
     'New Orleans Pelicans': 'NOP', 'New York Knicks': 'NYK', 'Oklahoma City Thunder': 'OKC',
     'Orlando Magic': 'ORL', 'Philadelphia 76ers': 'PHI', 'Phoenix Suns': 'PHX',
     'Portland Trail Blazers': 'POR', 'Sacramento Kings': 'SAC', 'San Antonio Spurs': 'SAS',
-    'Toronto Raptors': 'TOR', 'Utah Jazz': 'UTA', 'Washington Wizards': 'WAS'
+    'Toronto Raptors': 'TOR', 'Utah Jazz': 'UTA', 'Washington Wizards': 'WAS',
+    # NFL
+    'Arizona Cardinals': 'ARI', 'Atlanta Falcons': 'ATL', 'Baltimore Ravens': 'BAL',
+    'Buffalo Bills': 'BUF', 'Carolina Panthers': 'CAR', 'Chicago Bears': 'CHI',
+    'Cincinnati Bengals': 'CIN', 'Cleveland Browns': 'CLE', 'Dallas Cowboys': 'DAL',
+    'Denver Broncos': 'DEN', 'Detroit Lions': 'DET', 'Green Bay Packers': 'GB',
+    'Houston Texans': 'HOU', 'Indianapolis Colts': 'IND', 'Jacksonville Jaguars': 'JAX',
+    'Kansas City Chiefs': 'KC', 'Las Vegas Raiders': 'LV', 'Los Angeles Chargers': 'LAC',
+    'Los Angeles Rams': 'LAR', 'Miami Dolphins': 'MIA', 'Minnesota Vikings': 'MIN',
+    'New England Patriots': 'NE', 'New Orleans Saints': 'NO', 'New York Giants': 'NYG',
+    'New York Jets': 'NYJ', 'Philadelphia Eagles': 'PHI', 'Pittsburgh Steelers': 'PIT',
+    'San Francisco 49ers': 'SF', 'Seattle Seahawks': 'SEA', 'Tampa Bay Buccaneers': 'TB',
+    'Tennessee Titans': 'TEN', 'Washington Commanders': 'WAS',
+    # NHL
+    'Anaheim Ducks': 'ANA', 'Arizona Coyotes': 'ARI', 'Boston Bruins': 'BOS',
+    'Buffalo Sabres': 'BUF', 'Calgary Flames': 'CGY', 'Carolina Hurricanes': 'CAR',
+    'Chicago Blackhawks': 'CHI', 'Colorado Avalanche': 'COL', 'Columbus Blue Jackets': 'CBJ',
+    'Dallas Stars': 'DAL', 'Detroit Red Wings': 'DET', 'Edmonton Oilers': 'EDM',
+    'Florida Panthers': 'FLA', 'Los Angeles Kings': 'LAK', 'Minnesota Wild': 'MIN',
+    'Montreal Canadiens': 'MTL', 'Nashville Predators': 'NSH', 'New Jersey Devils': 'NJD',
+    'New York Islanders': 'NYI', 'New York Rangers': 'NYR', 'Ottawa Senators': 'OTT',
+    'Philadelphia Flyers': 'PHI', 'Pittsburgh Penguins': 'PIT', 'San Jose Sharks': 'SJ',
+    'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'TBL',
+    'Toronto Maple Leafs': 'TOR', 'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VGK',
+    'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG',
+    # Utah Hockey Club (new NHL team)
+    'Utah Hockey Club': 'UTA',
 }
 
 # Component instances (lazy loading)
@@ -98,6 +125,17 @@ def get_odds_fetcher():
 def get_team_abbr(full_name):
     """Get team abbreviation from full name."""
     return TEAM_ABBR.get(full_name, full_name[:3].upper())
+
+def validate_moneyline_odds(home_odds, away_odds):
+    """
+    Validate that odds look like American moneyline, not spreads.
+    Spreads are typically small numbers like -6, +3.5
+    Moneyline odds are typically -300 to +900 range (at least abs > 100)
+    """
+    # Both odds should have absolute value > 100 for moneyline
+    if abs(home_odds) < 100 or abs(away_odds) < 100:
+        return False
+    return True
 
 
 # ============== Live Data Routes ==============
@@ -278,6 +316,10 @@ def get_edge_analysis():
             away_abbr = get_team_abbr(away)
             home_odds = int(row['home_odds'])
             away_odds = int(row['away_odds'])
+            
+            # Skip if odds look like spreads (not moneyline)
+            if not validate_moneyline_odds(home_odds, away_odds):
+                continue
             
             # Simple EV calculation without complex predictor
             def implied_prob(odds):

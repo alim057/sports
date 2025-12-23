@@ -271,7 +271,37 @@ class EdgeAnalyzer:
         """Get overall performance summary."""
         summary = self._tracking_data['summary'].copy()
         
-        if summary['total_bets'] > 0:
+        # If no tracking data, try to load from CSV exports
+        if summary['total_bets'] == 0:
+            try:
+                csv_path = Path("./data")
+                csv_files = list(csv_path.glob("best_bets_*.csv"))
+                if csv_files:
+                    import pandas as pd
+                    all_bets = pd.concat([pd.read_csv(f) for f in csv_files], ignore_index=True)
+                    # Filter to resolved bets only
+                    resolved = all_bets[all_bets['result'].isin(['WIN', 'LOSS'])]
+                    if len(resolved) > 0:
+                        wins = len(resolved[resolved['result'] == 'WIN'])
+                        losses = len(resolved[resolved['result'] == 'LOSS'])
+                        # Parse payout column (format: +7.13 or -1.00)
+                        payouts = resolved['payout'].apply(
+                            lambda x: float(str(x).replace('+', '')) if pd.notna(x) and str(x).strip() else 0
+                        )
+                        total_profit = payouts.sum()
+                        summary = {
+                            'total_bets': len(resolved),
+                            'wins': wins,
+                            'losses': losses,
+                            'total_wagered': len(resolved),  # Assume $1 per bet
+                            'total_returned': len(resolved) + total_profit,
+                            'profit': total_profit,
+                            'roi': total_profit / len(resolved) if len(resolved) > 0 else 0
+                        }
+            except Exception as e:
+                print(f"Warning: Could not load CSV performance data: {e}")
+        
+        if summary.get('total_bets', 0) > 0:
             summary['win_rate'] = summary['wins'] / summary['total_bets']
         else:
             summary['win_rate'] = 0
