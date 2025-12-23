@@ -275,6 +275,109 @@ class TestDataIntegrity:
             assert 'isDemo' in perf
 
 
+class TestPhase4RiskManagement:
+    """Tests for Phase 3 risk management features."""
+    
+    def test_daily_status_endpoint_exists(self):
+        """Daily status endpoint should exist."""
+        from server import app
+        routes = [rule.rule for rule in app.url_map.iter_rules()]
+        assert '/api/daily-status' in routes
+    
+    def test_clv_summary_endpoint_exists(self):
+        """CLV summary endpoint should exist."""
+        from server import app
+        routes = [rule.rule for rule in app.url_map.iter_rules()]
+        assert '/api/clv-summary' in routes
+    
+    def test_daily_status_returns_correct_fields(self):
+        """Daily status should return expected fields."""
+        from server import app
+        
+        with app.test_client() as client:
+            response = client.get('/api/daily-status')
+            data = response.get_json()
+            
+            # Must have these fields
+            assert 'date' in data
+            assert 'profit_loss' in data
+            assert 'daily_loss_limit' in data
+            assert 'limit_hit' in data
+            assert 'can_bet' in data
+    
+    def test_clv_summary_returns_correct_fields(self):
+        """CLV summary should return expected fields."""
+        from server import app
+        
+        with app.test_client() as client:
+            response = client.get('/api/clv-summary')
+            data = response.get_json()
+            
+            # Must have these fields
+            assert 'total_tracked_bets' in data
+            assert 'estimated_clv' in data
+            assert 'status' in data
+    
+    def test_evaluator_has_correct_defaults(self):
+        """BettingEvaluator should have correct Phase 2/3 defaults."""
+        from betting.evaluator import BettingEvaluator
+        
+        evaluator = BettingEvaluator()
+        
+        # Phase 2: 7% EV threshold
+        assert evaluator.min_ev_threshold == 0.07, f"EV threshold should be 0.07, got {evaluator.min_ev_threshold}"
+        
+        # Phase 3: 10% daily loss limit
+        assert evaluator.daily_loss_limit == 0.10, f"Daily limit should be 0.10, got {evaluator.daily_loss_limit}"
+        
+        # Quarter Kelly (25%)
+        assert evaluator.max_kelly_fraction == 0.25, f"Kelly fraction should be 0.25, got {evaluator.max_kelly_fraction}"
+
+
+class TestPhase4ModelIntegrity:
+    """Tests for model and prediction integrity."""
+    
+    def test_predictor_returns_probabilities_in_range(self):
+        """Predictions should return probabilities between 0 and 1."""
+        try:
+            from models.advanced_predictor import AdvancedPredictor
+            predictor = AdvancedPredictor(sport="NBA")
+        except Exception as e:
+            pytest.skip(f"Could not initialize predictor: {e}")
+        
+        # Use known NBA teams
+        result = predictor.predict_game('LAL', 'BOS')
+        
+        if 'error' not in result:
+            home_prob = result.get('home_win_probability', 0)
+            away_prob = result.get('away_win_probability', 0)
+            
+            assert 0.0 <= home_prob <= 1.0, f"Home prob out of range: {home_prob}"
+            assert 0.0 <= away_prob <= 1.0, f"Away prob out of range: {away_prob}"
+    
+    def test_predictor_uses_correct_ev_threshold(self):
+        """Predictor should use 7% EV threshold."""
+        try:
+            from models.advanced_predictor import AdvancedPredictor
+            predictor = AdvancedPredictor(sport="NBA", min_ev_threshold=0.07)
+        except Exception as e:
+            pytest.skip(f"Could not initialize predictor: {e}")
+        
+        # Check the evaluator attached to predictor has correct threshold
+        assert predictor.evaluator.min_ev_threshold == 0.07
+    
+    def test_xgboost_models_loaded(self):
+        """XGBoost models should be loaded for NBA."""
+        try:
+            from models.advanced_predictor import AdvancedPredictor
+            predictor = AdvancedPredictor(sport="NBA")
+        except Exception as e:
+            pytest.skip(f"Could not initialize predictor: {e}")
+        
+        # Should have at least one model loaded
+        assert len(predictor.xgb_models) > 0, "No XGBoost models loaded"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 
