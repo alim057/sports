@@ -628,69 +628,46 @@ def get_best_odds():
 
 # ============== Model & Performance Routes ==============
 
+from betting.bet_tracker import BetTracker
+
+_bet_tracker = None
+
+def get_bet_tracker():
+    global _bet_tracker
+    if _bet_tracker is None:
+        _bet_tracker = BetTracker(db_path="./data/bets.db")
+    return _bet_tracker
+
+# ============== Model & Performance Routes ==============
+
 @app.route('/api/performance', methods=['GET'])
 def get_performance():
     """Get historical performance stats with $100 starting budget."""
     try:
         STARTING_BANKROLL = 100.0
-        BET_SIZE = 5.0  # $5 per bet (5% of bankroll)
         
-        analyzer = get_edge_analyzer()
-        performance = analyzer.get_performance_summary()
+        tracker = get_bet_tracker()
+        perf = tracker.get_performance_summary()
         
-        # If we have real data, scale it to realistic values
-        if performance.get('total_bets', 0) > 0:
-            total_bets = performance['total_bets']
-            wins = performance.get('wins', 0)
-            losses = performance.get('losses', 0)
-            
-            # Calculate profit based on realistic bet sizing
-            # Assume average odds of +110 for wins (-10% vig)
-            avg_win_payout = BET_SIZE * 1.1  # +$5.50 per win
-            avg_loss = BET_SIZE  # -$5 per loss
-            
-            profit = (wins * avg_win_payout) - (losses * avg_loss)
-            total_wagered = total_bets * BET_SIZE
-            total_returned = total_wagered + profit
-            
-            performance = {
-                'total_bets': total_bets,
-                'wins': wins,
-                'losses': losses,
-                'win_rate': wins / total_bets if total_bets > 0 else 0,
-                'total_wagered': total_wagered,
-                'total_returned': total_returned,
-                'profit': round(profit, 2),
-                'roi': profit / total_wagered if total_wagered > 0 else 0,
-                'starting_bankroll': STARTING_BANKROLL,
-                'current_bankroll': round(STARTING_BANKROLL + profit, 2)
-            }
-        else:
-            # Realistic demo data based on XGBoost performance (62% win rate)
-            total_bets = 48
-            wins = 30  # ~62.5% win rate  
-            losses = 18
-            
-            avg_win_payout = BET_SIZE * 1.1
-            avg_loss = BET_SIZE
-            profit = (wins * avg_win_payout) - (losses * avg_loss)
-            total_wagered = total_bets * BET_SIZE
-            
-            performance = {
-                'total_bets': total_bets,
-                'wins': wins,
-                'losses': losses,
-                'win_rate': wins / total_bets,
-                'total_wagered': total_wagered,
-                'total_returned': total_wagered + profit,
-                'profit': round(profit, 2),
-                'roi': profit / total_wagered,
-                'starting_bankroll': STARTING_BANKROLL,
-                'current_bankroll': round(STARTING_BANKROLL + profit, 2),
-                'isDemo': True
-            }
+        # Calculate derived stats
+        total_profit = perf.get('total_profit', 0)
+        current_bankroll = STARTING_BANKROLL + total_profit
         
-        return jsonify({'performance': performance})
+        response = {
+            'total_bets': perf.get('total_bets', 0),
+            'wins': perf.get('wins', 0),
+            'losses': perf.get('losses', 0),
+            'win_rate': perf.get('win_rate', 0),
+            'total_wagered': perf.get('total_staked', 0),
+            'total_returned': (perf.get('total_staked', 0) + perf.get('total_profit', 0)),
+            'profit': round(total_profit, 2),
+            'roi': perf.get('roi', 0),
+            'starting_bankroll': STARTING_BANKROLL,
+            'current_bankroll': round(current_bankroll, 2),
+            'isDemo': False
+        }
+        
+        return jsonify({'performance': response})
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -700,72 +677,20 @@ def get_performance():
 def get_performance_history():
     """Get daily P/L history for chart rendering."""
     try:
-        from pathlib import Path
-        import pandas as pd
+        tracker = get_bet_tracker()
+        history = tracker.get_daily_performance()
         
-        BET_SIZE = 5.0  # $5 per bet
-        
-        csv_path = Path("./data")
-        csv_files = list(csv_path.glob("best_bets_*.csv"))
-        
-        if not csv_files:
-            # Realistic sample data based on XGBoost model (~62% win rate)
-            # $5 per bet, avg win = +$5.50, loss = -$5.00
-            return jsonify({
-                'history': [
-                    {'date': '2025-12-18', 'profit': 3.50, 'cumulative': 3.50, 'wins': 4, 'losses': 3},   
-                    {'date': '2025-12-19', 'profit': 5.50, 'cumulative': 9.00, 'wins': 3, 'losses': 1},
-                    {'date': '2025-12-20', 'profit': -2.50, 'cumulative': 6.50, 'wins': 2, 'losses': 3},
-                    {'date': '2025-12-21', 'profit': 8.00, 'cumulative': 14.50, 'wins': 4, 'losses': 1},
-                    {'date': '2025-12-22', 'profit': 1.00, 'cumulative': 15.50, 'wins': 3, 'losses': 2}
-                ],
-                'totalProfit': 15.50,
-                'totalBets': 26,
-                'startingBankroll': 100.0,
-                'isDemo': True
-            })
-        
-        # Load all CSVs
-        all_bets = pd.concat([pd.read_csv(f) for f in csv_files], ignore_index=True)
-        
-        # Filter to resolved bets only
-        resolved = all_bets[all_bets['result'].isin(['WIN', 'LOSS'])]
-        
-        if len(resolved) == 0:
+        if not history:
             return jsonify({'history': [], 'message': 'No resolved bets yet'})
-        
-        # Parse payout column (format: +7.13 or -1.00)
-        resolved = resolved.copy()
-        resolved['payout_value'] = resolved['payout'].apply(
-            lambda x: float(str(x).replace('+', '')) if pd.notna(x) and str(x).strip() else 0
-        )
-        
-        # Group by date
-        daily = resolved.groupby('date').agg({
-            'payout_value': 'sum',
-            'result': lambda x: {'wins': (x == 'WIN').sum(), 'losses': (x == 'LOSS').sum()}
-        }).reset_index()
-        
-        # Calculate cumulative P/L
-        history = []
-        cumulative = 0
-        
-        for _, row in daily.iterrows():
-            profit = row['payout_value']
-            cumulative += profit
-            stats = row['result']
-            history.append({
-                'date': row['date'],
-                'profit': round(profit, 2),
-                'cumulative': round(cumulative, 2),
-                'wins': stats['wins'],
-                'losses': stats['losses']
-            })
+            
+        total_profit = history[-1]['cumulative'] if history else 0
+        total_bets = sum(h['wins'] + h['losses'] for h in history)
         
         return jsonify({
             'history': history,
-            'totalProfit': round(cumulative, 2),
-            'totalBets': len(resolved)
+            'totalProfit': round(total_profit, 2),
+            'totalBets': total_bets,
+            'isDemo': False
         })
     
     except Exception as e:
@@ -776,36 +701,46 @@ def get_performance_history():
 def get_recent_bets():
     """Get recent bets for the Performance tab table."""
     try:
-        from pathlib import Path
-        import pandas as pd
+        from flask import request
+        status_filter = request.args.get('status', 'all')
         
-        csv_path = Path("./data")
-        csv_files = list(csv_path.glob("best_bets_*.csv"))
+        # Convert 'all' to None for BetTracker
+        tracker_status = None
+        if status_filter != 'all':
+            tracker_status = status_filter
+            
+        tracker = get_bet_tracker()
+        # Fetch last 50 bets
+        bets_df = tracker.get_bet_history(limit=50, status=tracker_status)
         
-        if not csv_files:
+        if bets_df.empty:
             return jsonify({'bets': [], 'message': 'No bet history found'})
         
-        # Load all CSVs
-        all_bets = pd.concat([pd.read_csv(f) for f in csv_files], ignore_index=True)
-        
-        # Sort by date descending and take recent 20
-        all_bets = all_bets.sort_values('date', ascending=False).head(20)
-        
         bets = []
-        for _, row in all_bets.iterrows():
-            payout = str(row.get('payout', '')) if pd.notna(row.get('payout')) else ''
+        for _, row in bets_df.iterrows():
+            result = row.get('result', 'pending').upper()
+            profit = row.get('profit_loss', 0)
+            
+            # Format payout string
+            if result == 'WIN':
+                payout = f"+{profit:.2f}"
+            elif result == 'LOSS':
+                payout = f"{profit:.2f}"
+            else:
+                payout = "-"
+                
             bets.append({
-                'date': row.get('date', ''),
-                'sport': row.get('sport', ''),
-                'game': row.get('game', ''),
-                'team': row.get('team', ''),
-                'result': row.get('result', 'PENDING'),
-                'odds': row.get('odds', ''),
+                'date': row.get('game_date', ''),
+                'sport': row.get('sport', '').upper(),
+                'game': f"{row.get('away_team')} @ {row.get('home_team')}",
+                'team': row.get('selection', ''),
+                'result': result,
+                'odds': row.get('odds', 0),
                 'payout': payout
             })
-        
+            
         return jsonify({'bets': bets})
-    
+        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

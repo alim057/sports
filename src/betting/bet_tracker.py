@@ -315,6 +315,7 @@ class BetTracker:
         sport: str = None,
         start_date: str = None,
         end_date: str = None,
+        status: str = None,
         limit: int = 100
     ) -> pd.DataFrame:
         """Get historical bets with optional filters."""
@@ -333,6 +334,15 @@ class BetTracker:
         if end_date:
             query += " AND game_date <= ?"
             params.append(end_date)
+            
+        if status:
+            if status == 'pending':
+                query += " AND result = 'pending'"
+            elif status == 'resolved':
+                query += " AND result != 'pending'"
+            elif status in ['win', 'loss', 'push']:
+                query += " AND result = ?"
+                params.append(status)
         
         query += f" ORDER BY placed_at DESC LIMIT {limit}"
         
@@ -510,6 +520,46 @@ class BetTracker:
             return None
         
         return df['expected_value'].corr(df['won'])
+
+    def get_daily_performance(self) -> List[Dict]:
+        """
+        Get daily P/L and cumulative bankroll history.
+        
+        Returns:
+            List of dicts with date, profit, cumulative, wins, losses
+        """
+        conn = sqlite3.connect(self.db_path)
+        
+        # Get all resolved bets sorted by date
+        query = """
+            SELECT 
+                DATE(resolved_at) as date,
+                SUM(profit_loss) as daily_profit,
+                SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) as losses
+            FROM bets
+            WHERE result != 'pending' AND resolved_at IS NOT NULL
+            GROUP BY DATE(resolved_at)
+            ORDER BY DATE(resolved_at) ASC
+        """
+        
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        result = []
+        cumulative = 0
+        
+        for _, row in df.iterrows():
+            cumulative += row['daily_profit']
+            result.append({
+                'date': row['date'],
+                'profit': round(row['daily_profit'], 2),
+                'cumulative': round(cumulative, 2),
+                'wins': int(row['wins']),
+                'losses': int(row['losses'])
+            })
+            
+        return result
     
     def generate_report(self) -> str:
         """Generate a comprehensive performance report."""

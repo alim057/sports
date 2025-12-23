@@ -83,8 +83,8 @@ class AdvancedPredictor:
             self._teams = {t['abbreviation']: t for t in nba_teams_static.get_teams()}
         elif self.sport == "NFL":
             self.sport_fetcher = NFLFetcher()
-            self.player_fetcher = None # NFL Player fetcher Todo
-            self.injury_fetcher = None # NFL Injury fetcher Todo
+            self.player_fetcher = None 
+            self.injury_fetcher = None 
             self.feature_engine = NFLFeatureEngine()
             self.player_features = None
             
@@ -94,6 +94,14 @@ class AdvancedPredictor:
                 self._teams = teams_df.set_index('team_abbr').to_dict('index')
             else:
                 self._teams = {}
+        elif self.sport == "NCAAF":
+            from data.sport_fetcher import NCAAFFetcher
+            self.sport_fetcher = NCAAFFetcher()
+            self.player_fetcher = None
+            self.injury_fetcher = None
+            self.feature_engine = None # Basic fallback for now
+            self.player_features = None
+            self._teams = {}
         else:
             raise ValueError(f"Unsupported sport: {sport}")
 

@@ -145,6 +145,67 @@ class NBAFetcher:
         result['away_team'] = games_df['VISITOR_TEAM_ID'].map(id_to_abbr)
         
         return result
+
+    def get_scores(self, date: datetime = None) -> pd.DataFrame:
+        """Get game scores for a specific date."""
+        if date is None:
+            date = datetime.now()
+        date_str = date.strftime('%Y-%m-%d')
+        
+        self._rate_limit()
+        try:
+            board = scoreboardv2.ScoreboardV2(game_date=date_str)
+            header = board.get_data_frames()[0]
+            linescore = board.get_data_frames()[1]
+            
+            if header.empty:
+                return pd.DataFrame()
+            
+            # Ensure IDs are strings for camparison
+            header['GAME_ID'] = header['GAME_ID'].astype(str)
+            linescore['GAME_ID'] = linescore['GAME_ID'].astype(str)
+            header['HOME_TEAM_ID'] = header['HOME_TEAM_ID'].astype(str)
+            header['VISITOR_TEAM_ID'] = header['VISITOR_TEAM_ID'].astype(str)
+            linescore['TEAM_ID'] = linescore['TEAM_ID'].astype(str)
+            
+            # Map IDs to Abbr
+            teams_df = self.get_all_teams()
+            id_to_abbr = dict(zip(teams_df['id'].astype(str), teams_df['abbreviation']))
+            
+            scores = []
+            for _, game in header.iterrows():
+                game_id = game['GAME_ID']
+                home_id = game['HOME_TEAM_ID']
+                away_id = game['VISITOR_TEAM_ID']
+                status_id = game['GAME_STATUS_ID'] # 3 is Final
+                
+                # Find scores in linescore
+                home_line = linescore[(linescore['GAME_ID'] == game_id) & (linescore['TEAM_ID'] == home_id)]
+                away_line = linescore[(linescore['GAME_ID'] == game_id) & (linescore['TEAM_ID'] == away_id)]
+                
+                home_score = home_line['PTS'].iloc[0] if not home_line.empty else None
+                away_score = away_line['PTS'].iloc[0] if not away_line.empty else None
+                
+                if status_id == 3:
+                    status = 'Final'
+                elif status_id == 2:
+                    status = 'Live'
+                else:
+                    status = 'Scheduled'
+                    
+                scores.append({
+                    'game_id': game_id,
+                    'home_team': id_to_abbr.get(home_id),
+                    'away_team': id_to_abbr.get(away_id),
+                    'home_score': home_score,
+                    'away_score': away_score,
+                    'status': status
+                })
+                
+            return pd.DataFrame(scores)
+        except Exception as e:
+            print(f"Error fetching NBA scores: {e}")
+            return pd.DataFrame()
     
     def get_standings(self, season: str = "2024-25") -> pd.DataFrame:
         """Get current league standings."""

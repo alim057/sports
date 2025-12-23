@@ -594,11 +594,12 @@ async function loadRecentBets() {
     if (!tableBody) return;
 
     try {
-        const response = await fetch(`${API_BASE}/api/recent-bets`);
+        const statusFilter = document.getElementById('filter-recent-status')?.value || 'all';
+        const response = await fetch(`${API_BASE}/api/recent-bets?status=${statusFilter}`);
         const data = await response.json();
 
         if (!data.bets || data.bets.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="7">No betting history yet</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="7">No betting history found</td></tr>';
             return;
         }
 

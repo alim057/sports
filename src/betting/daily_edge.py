@@ -68,7 +68,7 @@ def run_edge_analysis(auto_save: bool = True, stake: float = 50.0):
     today = datetime.now().strftime("%Y-%m-%d")
     all_edges = []
     
-    sports = ['NBA', 'NFL']
+    sports = ['NBA', 'NFL', 'NCAAF']
     
     for sport in sports:
         print(f"\n--- Processing {sport} ---")
@@ -84,12 +84,20 @@ def run_edge_analysis(auto_save: bool = True, stake: float = 50.0):
             
             if games_df.empty:
                 print(f"  No {sport} games found for today.")
-                continue
-            
-            print(f"  Found {len(games_df)} games.")
+                # For NCAAF, we might rely purely on odds if no schedule found via API
+                if sport == 'NCAAF':
+                     print("  Checking for NCAAF odds directly...")
+            else:
+                print(f"  Found {len(games_df)} games.")
             
             # Fetch Live Odds for this sport
-            sport_key = 'americanfootball_nfl' if sport == 'NFL' else 'basketball_nba'
+            if sport == 'NFL':
+                sport_key = 'americanfootball_nfl'
+            elif sport == 'NCAAF':
+                sport_key = 'americanfootball_ncaaf'
+            else:
+                sport_key = 'basketball_nba'
+
             odds_fetcher = LiveOddsFetcher(api_key=API_KEY)
             odds = odds_fetcher.get_live_odds(sport_key, markets='h2h,totals')
             

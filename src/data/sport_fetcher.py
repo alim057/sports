@@ -52,6 +52,17 @@ class SportFetcher(ABC):
         pass
     
     @abstractmethod
+    def get_scores(self, date: datetime = None) -> pd.DataFrame:
+        """
+        Get game scores for a specific date.
+        
+        Returns:
+            DataFrame with columns: [game_id, home_team, away_team, home_score, away_score, status]
+            status should be 'Final', 'Live', or 'Scheduled'
+        """
+        pass
+    
+    @abstractmethod
     def get_standings(self, season: str = None) -> pd.DataFrame:
         """Get current standings."""
         pass
@@ -174,6 +185,33 @@ class NFLFetcher(SportFetcher):
         except Exception as e:
             print(f"Error fetching NFL schedule: {e}")
             return pd.DataFrame()
+
+    def get_scores(self, date: datetime = None) -> pd.DataFrame:
+        """Get NFL scores for a specific date."""
+        date = date or datetime.now()
+        schedule = self.get_schedule(date)
+        
+        if schedule.empty:
+            return pd.DataFrame()
+            
+        scores = []
+        for _, game in schedule.iterrows():
+            # Check if game is completed
+            if pd.notna(game.get('home_score')) and pd.notna(game.get('away_score')):
+                status = 'Final'
+            else:
+                status = 'Scheduled'
+            
+            scores.append({
+                'game_id': game.get('game_id'),
+                'home_team': game.get('home_team'),
+                'away_team': game.get('away_team'),
+                'home_score': game.get('home_score'),
+                'away_score': game.get('away_score'),
+                'status': status
+            })
+            
+        return pd.DataFrame(scores)
     
     def get_standings(self, season: str = None) -> pd.DataFrame:
         # Fallback for standings is complex without the lib, return empty or implement later
@@ -278,6 +316,30 @@ class MLBFetcher(SportFetcher):
             print(f"Error fetching MLB schedule: {e}")
             return pd.DataFrame()
     
+    def get_scores(self, date: datetime = None) -> pd.DataFrame:
+        if not self._available:
+            return pd.DataFrame()
+            
+        date = date or datetime.now()
+        try:
+            date_str = date.strftime("%Y-%m-%d")
+            schedule = self.api.schedule(date=date_str)
+            
+            scores = []
+            for game in schedule:
+                scores.append({
+                    'game_id': game.get('game_id'),
+                    'home_team': game.get('home_name'),
+                    'away_team': game.get('away_name'),
+                    'home_score': game.get('home_score'),
+                    'away_score': game.get('away_score'),
+                    'status': game.get('status')
+                })
+            return pd.DataFrame(scores)
+        except Exception as e:
+            print(f"Error fetching MLB scores: {e}")
+            return pd.DataFrame()
+
     def get_standings(self, season: str = None) -> pd.DataFrame:
         if not self._available:
             return pd.DataFrame()
@@ -379,6 +441,35 @@ class NHLFetcher(SportFetcher):
         except Exception as e:
             print(f"Error fetching NHL schedule: {e}")
             return pd.DataFrame()
+
+    def get_scores(self, date: datetime = None) -> pd.DataFrame:
+        if not self._available:
+            return pd.DataFrame()
+        
+        date = date or datetime.now()
+        try:
+            schedule = self.client.schedule.get_schedule(date=date.strftime("%Y-%m-%d"))
+            scores = []
+            for game in schedule.get('games', []):
+                if game.get('gameState') in ['FINAL', 'OFF']:
+                    status = 'Final'
+                elif game.get('gameState') in ['LIVE', 'CRIT']:
+                    status = 'Live'
+                else:
+                    status = 'Scheduled'
+                    
+                scores.append({
+                    'game_id': game.get('id'),
+                    'home_team': game.get('homeTeam', {}).get('abbrev', ''),
+                    'away_team': game.get('awayTeam', {}).get('abbrev', ''),
+                    'home_score': game.get('homeTeam', {}).get('score'),
+                    'away_score': game.get('awayTeam', {}).get('score'),
+                    'status': status
+                })
+            return pd.DataFrame(scores)
+        except Exception as e:
+            print(f"Error fetching NHL scores: {e}")
+            return pd.DataFrame()
     
     def get_standings(self, season: str = None) -> pd.DataFrame:
         if not self._available:
@@ -409,6 +500,71 @@ class NHLFetcher(SportFetcher):
         return ["2022-23", "2023-24", "2024-25"]
 
 
+
+class NCAAFFetcher(SportFetcher):
+    """Fetches NCAAF game data using cfbd (College Football Data)."""
+    
+    SPORT_NAME = "NCAAF"
+    SPORT_KEY = "americanfootball_ncaaf"
+    
+    def __init__(self):
+        super().__init__()
+        try:
+            import cfbd
+            from cfbd.rest import ApiException
+            # CFBD requires an API key in configuration
+            # For now, we'll check if environment variable or config is set, 
+            # otherwise simplistic fallback
+            self.cfbd = cfbd
+            self.ApiException = ApiException
+            # Defaults
+            self._available = True 
+            self._configure_api()
+        except ImportError:
+            print("Warning: cfbd not installed. Run: pip install cfbd")
+            self._available = False
+            self.cfbd = None
+
+    def _configure_api(self):
+        # Placeholder for API configuration
+        # In a real scenario, we'd load from config.yaml or env vars
+        # configuration = cfbd.Configuration()
+        # configuration.api_key['Authorization'] = 'YOUR_API_KEY'
+        # configuration.api_key_prefix['Authorization'] = 'Bearer'
+        # self.api_config = configuration
+        pass
+
+    def get_all_teams(self) -> pd.DataFrame:
+        if not self._available:
+            return pd.DataFrame()
+        # Basic implementation or fallback
+        # returning empty for now if no key, but class structure is ready
+        return pd.DataFrame()
+
+    def get_team_games(self, team_id: str, season: str = None) -> pd.DataFrame:
+        if not self._available:
+            return pd.DataFrame()
+        return pd.DataFrame()
+
+    def get_schedule(self, date: datetime = None) -> pd.DataFrame:
+        # Fallback to empty, relying on OddsFetcher for basic schedule
+        # if api key is missing
+        return pd.DataFrame()
+
+    def get_scores(self, date: datetime = None) -> pd.DataFrame:
+        # Fallback to pure odds/scores integration if no CFBD key
+        return pd.DataFrame()
+
+    def get_standings(self, season: str = None) -> pd.DataFrame:
+        return pd.DataFrame()
+
+    def _fetch_season_games(self, season: str) -> pd.DataFrame:
+        return pd.DataFrame()
+
+    def get_default_seasons(self) -> List[str]:
+        return ["2022", "2023", "2024"]
+
+
 class SportFetcherFactory:
     """Factory for creating sport-specific fetchers."""
     
@@ -416,7 +572,8 @@ class SportFetcherFactory:
         'nba': None,  # Use existing NBAFetcher
         'nfl': NFLFetcher,
         'mlb': MLBFetcher,
-        'nhl': NHLFetcher
+        'nhl': NHLFetcher,
+        'ncaaf': NCAAFFetcher
     }
     
     @classmethod
