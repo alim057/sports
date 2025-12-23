@@ -330,8 +330,13 @@ async function loadPredictions() {
 }
 
 async function loadEdgeAnalysis() {
-    const summary = document.getElementById('edge-summary');
     const tableBody = document.getElementById('edge-table-body');
+
+    // Bail out if Edge Analysis section doesn't exist in current HTML
+    if (!tableBody) {
+        console.log('Edge Analysis section not present in DOM');
+        return;
+    }
 
     try {
         const response = await fetch(`${API_BASE}/api/edge-analysis?sport=${currentSport}`);
@@ -342,11 +347,14 @@ async function loadEdgeAnalysis() {
             return;
         }
 
-        // Update summary
-        document.getElementById('games-analyzed').textContent = data.summary?.totalGames || 0;
-        document.getElementById('games-with-edge').textContent = data.summary?.gamesWithEdge || 0;
-        document.getElementById('avg-edge').textContent =
-            `${((data.summary?.avgEdge || 0) * 100).toFixed(1)}%`;
+        // Update summary elements (with null checks)
+        const gamesAnalyzed = document.getElementById('games-analyzed');
+        const gamesWithEdge = document.getElementById('games-with-edge');
+        const avgEdge = document.getElementById('avg-edge');
+
+        if (gamesAnalyzed) gamesAnalyzed.textContent = data.summary?.totalGames || 0;
+        if (gamesWithEdge) gamesWithEdge.textContent = data.summary?.gamesWithEdge || 0;
+        if (avgEdge) avgEdge.textContent = `${((data.summary?.avgEdge || 0) * 100).toFixed(1)}%`;
 
         // Update table
         if (!data.edges || data.edges.length === 0) {
@@ -369,7 +377,9 @@ async function loadEdgeAnalysis() {
         renderEdgeChart(data.edges);
 
     } catch (error) {
-        tableBody.innerHTML = `<tr><td colspan="6">Failed to load: ${error.message}</td></tr>`;
+        if (tableBody) {
+            tableBody.innerHTML = `<tr><td colspan="6">Failed to load: ${error.message}</td></tr>`;
+        }
     }
 }
 
