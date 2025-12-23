@@ -100,13 +100,6 @@ def get_team_abbr(full_name):
     return TEAM_ABBR.get(full_name, full_name[:3].upper())
 
 
-# ============== Static Routes ==============
-
-@app.route('/')
-def index():
-    return send_from_directory('.', 'index.html')
-
-
 # ============== Live Data Routes ==============
 
 @app.route('/api/live-odds', methods=['GET'])

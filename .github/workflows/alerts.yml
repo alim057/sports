@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pyyaml pandas numpy
+          pip install requests pyyaml pandas numpy nba_api sqlalchemy
 
       - name: Run Alerts
         env:
