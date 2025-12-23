@@ -35,11 +35,16 @@ class InjuryFetcher:
     def _make_request(self, url: str) -> Optional[Dict]:
         """Make HTTP request to ESPN API."""
         try:
-            response = requests.get(url, timeout=10)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            print(f"Error fetching from ESPN: {e}")
+            print(f"Error fetching from ESPN ({url}): {e}")
+            if 'response' in locals():
+                print(f"Response: {response.text[:200]}")
             return None
     
     def get_all_team_mappings(self) -> Dict[str, Dict]:
@@ -90,14 +95,31 @@ class InjuryFetcher:
         if not data:
             return pd.DataFrame()
         
+        # Ensure we have team mappings
+        team_mappings = self.get_all_team_mappings()
+        name_to_abbr = {v['name']: k for k, v in team_mappings.items()}
+        
+        # Add manual overrides for common mismatches if needed
+        # name_to_abbr['Los Angeles CS'] = 'LAC' 
+        
         injuries = []
         
-        for team_data in data.get('items', []):
-            team_name = team_data.get('team', {}).get('displayName', 'Unknown')
-            team_abbr = team_data.get('team', {}).get('abbreviation', '').upper()
+        for team_data in data.get('injuries', []):
+            team_name = team_data.get('displayName', 'Unknown')
             
+            # Lookup abbr from name
+            team_abbr = name_to_abbr.get(team_name, '')
+            if not team_abbr:
+                # Try partial match or just use name derived abbr as fallback
+                # e.g. "Atlanta Hawks" -> "ATL" (not reliable, but better than nothing)
+                 pass
+
             for injury in team_data.get('injuries', []):
                 athlete = injury.get('athlete', {})
+                
+                # If we still don't have team_abbr, try to get it from injury object (some might have it)
+                if not team_abbr:
+                    team_abbr = injury.get('team', {}).get('abbreviation', '').upper()
                 
                 status = injury.get('status', 'unknown').lower()
                 

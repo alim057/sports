@@ -57,19 +57,17 @@ def run_edge_analysis(auto_save: bool = True, stake: float = 50.0):
     # Get live odds
     print("Fetching live odds...")
     fetcher = LiveOddsFetcher(api_key=API_KEY)
-    odds = fetcher.get_live_odds('nba', markets='h2h')
+    odds = fetcher.get_live_odds('nba', markets='h2h,totals')
     
     if odds.empty:
         print("No odds data available")
         return []
     
-    # Get h2h markets and average odds across books
-    h2h_odds = odds[odds['market'] == 'h2h'].groupby(['home_team', 'away_team']).agg({
-        'home_odds': 'mean',
-        'away_odds': 'mean'
-    }).reset_index()
+    # Process odds by game
+    # We need to group by game_id to keep H2H and Totals together
+    game_groups = odds.groupby('game_id')
     
-    print(f"Found {len(h2h_odds)} games with odds")
+    print(f"Found {len(game_groups)} games with odds")
     print()
     
     # Initialize predictor and tracker
@@ -81,77 +79,126 @@ def run_edge_analysis(auto_save: bool = True, stake: float = 50.0):
     edges = []
     today = datetime.now().strftime("%Y-%m-%d")
     
-    for _, row in h2h_odds.iterrows():
-        home = row['home_team']
-        away = row['away_team']
+    for game_id, group in game_groups:
+        # Get basic game info
+        home = group.iloc[0]['home_team']
+        away = group.iloc[0]['away_team']
         home_abbr = get_team_abbr(home)
         away_abbr = get_team_abbr(away)
-        home_odds = row['home_odds']
-        away_odds = row['away_odds']
+        
+        # Extract H2H odds (avg)
+        h2h = group[group['market'] == 'h2h']
+        if h2h.empty:
+            continue
+            
+        home_odds = int(h2h['home_odds'].mean())
+        away_odds = int(h2h['away_odds'].mean())
+        
+        # Extract Totals (avg over line)
+        totals = group[group['market'] == 'totals']
+        total_line = 0
+        over_odds = -110
+        under_odds = -110
+        
+        if not totals.empty:
+            # simple avg of the most common line or just first
+            total_line = totals['total'].mode()[0] if not totals['total'].empty else 225.0
+            # Get odds for this line
+            line_odds = totals[totals['total'] == total_line]
+            if not line_odds.empty:
+                over_odds = int(line_odds['over_odds'].mean())
+                under_odds = int(line_odds['under_odds'].mean())
+        
+        print(f"[{away_abbr} @ {home_abbr}]")
         
         try:
+            # 1. Moneyline Prediction
             pred = predictor.predict_with_odds(
                 home_abbr, away_abbr,
-                int(home_odds), int(away_odds)
+                home_odds, away_odds
             )
             
             if 'error' in pred:
-                print(f"[{away_abbr} @ {home_abbr}] Error: {pred['error']}")
+                print(f"  Error: {pred['error']}")
                 continue
             
+            # Print Moneyline Analysis
             ba = pred.get('betting_analysis', {})
-            home_ev = ba.get('home_ev', 0)
-            away_ev = ba.get('away_ev', 0)
             home_prob = pred['home_win_probability']
             away_prob = pred['away_win_probability']
             
-            print(f"[{away_abbr} @ {home_abbr}]")
-            print(f"  Model: {home_abbr} {home_prob:.1%} | {away_abbr} {away_prob:.1%}")
-            print(f"  Odds: {home_abbr} {int(home_odds):+d} | {away_abbr} {int(away_odds):+d}")
-            print(f"  EV: {home_abbr} {home_ev:.1%} | {away_abbr} {away_ev:.1%}")
+            print(f"  Moneyline: {home_abbr} {home_prob:.1%} ({home_odds:+d}) | {away_abbr} {away_prob:.1%} ({away_odds:+d})")
             
-            best_ev = max(home_ev, away_ev)
+            best_ev = max(ba.get('home_ev', 0), ba.get('away_ev', 0))
             if best_ev > 0.02:
-                best_team = home_abbr if home_ev > away_ev else away_abbr
-                best_prob = home_prob if home_ev > away_ev else away_prob
-                best_odds = int(home_odds) if home_ev > away_ev else int(away_odds)
+                best_team = ba['best_bet']
+                print(f"  >>> ML EDGE: {best_team} (+{best_ev:.1%} EV)")
                 
-                print(f"  >>> EDGE FOUND: {best_team} (+{best_ev:.1%} EV)")
-                
-                edge_data = {
+                # Save ML bet
+                edges.append({
                     'game': f"{away_abbr} @ {home_abbr}",
-                    'home_team': home_abbr,
-                    'away_team': away_abbr,
+                    'bet_type': 'moneyline',
                     'team': best_team,
                     'ev': best_ev,
-                    'prob': best_prob,
-                    'odds': best_odds
-                }
-                edges.append(edge_data)
-                
-                # Auto-save to bet tracker
+                    'odds': home_odds if best_team == home_abbr else away_odds,
+                    'prob': home_prob if best_team == home_abbr else away_prob
+                })
                 if auto_save and tracker:
-                    bet_id = tracker.place_bet(
-                        home_team=home_abbr,
-                        away_team=away_abbr,
-                        bet_type='moneyline',
-                        selection=best_team,
-                        odds=best_odds,
-                        stake=stake,
-                        model_prob=best_prob,
-                        expected_value=best_ev,
-                        game_date=today,
-                        notes=f"Auto-saved from daily_edge.py"
+                    tracker.place_bet(
+                        home_team=home_abbr, away_team=away_abbr, bet_type='moneyline',
+                        selection=best_team, odds=(home_odds if best_team == home_abbr else away_odds),
+                        stake=stake, model_prob=(home_prob if best_team == home_abbr else away_prob),
+                        expected_value=best_ev, game_date=today, notes="ML Auto-bet"
                     )
-                    edge_data['bet_id'] = bet_id
+
+            # 2. Totals Prediction
+            if total_line > 0:
+                t_pred = predictor.predict_total_with_odds(
+                    home_abbr, away_abbr, total_line, over_odds, under_odds
+                )
+                t_ba = t_pred.get('betting_analysis', {})
+                over_ev = t_ba.get('over_ev', 0)
+                under_ev = t_ba.get('under_ev', 0)
+                
+                print(f"  Total: {total_line} (Exp: {t_pred['expected_total']:.1f}) | Over {t_pred['over_prob']:.1%} | Under {(1-t_pred['over_prob']):.1%}")
+                
+                # Report Weather
+                if t_pred.get('weather'):
+                    w = t_pred['weather']
+                    if w.get('is_dome'):
+                        print(f"  Weather: Dome (No Impact)")
+                    else:
+                        print(f"  Weather: {w.get('temp_f')}F, {w.get('wind_mph')}mph, {w.get('condition')}")
+
+                if t_ba.get('note'):
+                    print(f"  Note: {t_ba['note']}")
+                
+                best_total_ev = max(over_ev, under_ev)
+                if best_total_ev > 0.02:
+                    best_side = t_ba['best_bet'] # "Over X"
+                    print(f"  >>> TOT EDGE: {best_side} (+{best_total_ev:.1%} EV)")
                     
-            else:
-                print(f"  No significant edge")
+                    edges.append({
+                        'game': f"{away_abbr} @ {home_abbr}",
+                        'bet_type': 'total',
+                        'team': best_side,
+                        'ev': best_total_ev,
+                        'odds': over_odds if "Over" in best_side else under_odds,
+                        'prob': t_pred['over_prob'] if "Over" in best_side else (1-t_pred['over_prob'])
+                    })
+                    if auto_save and tracker:
+                        tracker.place_bet(
+                            home_team=home_abbr, away_team=away_abbr, bet_type='total',
+                            selection=best_side, odds=(over_odds if "Over" in best_side else under_odds),
+                            stake=stake, model_prob=(t_pred['over_prob'] if "Over" in best_side else (1-t_pred['over_prob'])),
+                            expected_value=best_total_ev, game_date=today, notes=t_ba.get('note', 'Total Auto-bet')
+                        )
+            
             print()
             
         except Exception as e:
-            print(f"[{away_abbr} @ {home_abbr}] Error: {str(e)[:50]}")
-            print()
+            print(f"  Error: {str(e)[:50]}")
+            continue
     
     # Summary
     print("=" * 70)
@@ -163,24 +210,17 @@ def run_edge_analysis(auto_save: bool = True, stake: float = 50.0):
         
         print(f"\nFound {len(edges)} bets with positive expected value:\n")
         for i, e in enumerate(edges, 1):
-            print(f"{i}. {e['game']}")
+            print(f"{i}. {e['game']} ({e['bet_type']})")
             print(f"   Bet: {e['team']} ({e['odds']:+d})")
             print(f"   Model Probability: {e['prob']:.1%}")
             print(f"   Expected Value: +{e['ev']:.1%}")
-            if 'bet_id' in e:
-                print(f"   >>> Saved as Bet #{e['bet_id']}")
             print()
         
         if auto_save:
-            print(f"All {len(edges)} bets saved to database.")
-            print("To resolve after games: python -c \"from src.betting.bet_tracker import BetTracker; t=BetTracker(); print(t.get_pending_bets())\"")
+            print(f"All {len(edges)} bets saved.")
     else:
-        print("\nNo significant edges found in today's games.")
-        print("The market odds are fairly priced relative to our model.")
+        print("\nNo significant edges found.")
     
-    print("=" * 70)
-    print("DISCLAIMER: For educational purposes only.")
-    print("Past performance does not guarantee future results.")
     print("=" * 70)
     
     return edges

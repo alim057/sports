@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from data.nba_fetcher import NBAFetcher
 from data.player_fetcher import PlayerFetcher
 from data.odds_fetcher import OddsFetcher
+from data.weather_fetcher import WeatherFetcher
+from data.injury_fetcher import InjuryFetcher
 from features.team_features import TeamFeatureEngine
 from features.player_features import PlayerFeatureEngine
 from models.predictor import GamePredictor
@@ -48,6 +50,8 @@ class AdvancedPredictor:
         self.nba_fetcher = NBAFetcher()
         self.player_fetcher = PlayerFetcher()
         self.odds_fetcher = OddsFetcher()
+        self.weather_fetcher = WeatherFetcher()
+        self.injury_fetcher = InjuryFetcher()
         
         # Feature engines
         self.team_features = TeamFeatureEngine()
@@ -147,14 +151,6 @@ class AdvancedPredictor:
     ) -> Dict:
         """
         Make a prediction for a single game.
-        
-        Args:
-            home_team: Home team abbreviation
-            away_team: Away team abbreviation
-            include_player_features: Whether to include player analysis
-            
-        Returns:
-            Prediction dictionary with probabilities and analysis
         """
         # Get team stats
         home_stats = self.get_team_recent_stats(home_team)
@@ -187,6 +183,19 @@ class AdvancedPredictor:
                 except Exception as e:
                     print(f"Warning: Player feature error: {e}")
         
+        # Get Injury Analysis
+        injury_analysis = {}
+        try:
+            injury_data = self.injury_fetcher.get_matchup_injury_comparison(home_team, away_team)
+            injury_analysis = {
+                'home_impact': injury_data['home_injuries']['impact_score'],
+                'away_impact': injury_data['away_injuries']['impact_score'],
+                'net_impact_prob': injury_data['home_advantage_pct'] # e.g. -0.05 if home has more injuries
+            }
+        except Exception as e:
+            print(f"Warning: Injury fetch error: {e}")
+            injury_analysis = {'net_impact_prob': 0}
+
         # Make prediction (using trained model if available)
         home_win_prob = None
         if self.predictor.model is not None and self.predictor.feature_names is not None:
@@ -214,24 +223,136 @@ class AdvancedPredictor:
             )
             home_win_prob = max(0.1, min(0.9, home_win_prob))
         
+        # Apply Injury Adjustment
+        # If home_advantage_pct is -0.05, we subtract 5% from home win prob
+        injury_adj = injury_analysis.get('net_impact_prob', 0)
+        
+        # Dampen the adjustment if it's too extreme? 
+        # The fetcher already scales it (1 point = 2%). 
+        # Let's cap it at +/- 20% to be safe.
+        injury_adj = max(-0.20, min(0.20, injury_adj))
+        
+        home_win_prob_adjusted = home_win_prob + injury_adj
+        home_win_prob_adjusted = max(0.05, min(0.95, home_win_prob_adjusted))
+        
         result = {
             'home_team': home_team,
             'away_team': away_team,
-            'home_win_probability': home_win_prob,
-            'away_win_probability': 1 - home_win_prob,
-            'predicted_winner': home_team if home_win_prob > 0.5 else away_team,
-            'confidence': max(home_win_prob, 1 - home_win_prob),
+            'home_win_probability': home_win_prob_adjusted,
+            'away_win_probability': 1 - home_win_prob_adjusted,
+            'predicted_winner': home_team if home_win_prob_adjusted > 0.5 else away_team,
+            'confidence': max(home_win_prob_adjusted, 1 - home_win_prob_adjusted),
             'team_analysis': {
                 'home_pts_l5': home_stats.get('PTS_L5', 0),
                 'away_pts_l5': away_stats.get('PTS_L5', 0),
                 'home_streak': home_stats.get('STREAK', 0),
                 'away_streak': away_stats.get('STREAK', 0),
             },
-            'player_analysis': player_analysis
+            'player_analysis': player_analysis,
+            'injury_analysis': injury_analysis,
+            'base_prob': home_win_prob # For debugging/transparency
         }
         
         return result
     
+    
+    def predict_total(
+        self,
+        home_team: str,
+        away_team: str,
+        total_line: float
+    ) -> Dict:
+        """
+        Predict total score probability.
+        
+        Args:
+            home_team: Home team abbreviation
+            away_team: Away team abbreviation
+            total_line: Bookmaker's total line
+            
+        Returns:
+            Dict with probabilities and weather info
+        """
+        # Get team stats
+        home_stats = self.get_team_recent_stats(home_team)
+        away_stats = self.get_team_recent_stats(away_team)
+        
+        # Default stats if missing
+        h_ppg = home_stats.get('PTS_L10', 112.0) if not home_stats.empty else 112.0
+        a_ppg = away_stats.get('PTS_L10', 112.0) if not away_stats.empty else 112.0
+        
+        # Simple heuristic for expected total
+        # (Home PPG + Away PPG) / 2 isn't quite right, it's (Home Offense + Away Defense ...)
+        # For simplicity: Sum of average scores
+        expected_total = (h_ppg + a_ppg) / 2 + (h_ppg + a_ppg) / 2 # Wait, that's just sum
+        # Actually expected score = (Home PPG + Away Allowed) / 2...
+        # Let's use simple sum of recent scoring averages for now as a baseline
+        # (This is a very rough heuristic, Phase 2 ML will improve this)
+        expected_total = h_ppg + a_ppg 
+        
+        # Calculate prob based on difference from line
+        # Assuming std dev of ~12 points for NBA totals
+        diff = expected_total - total_line
+        z_score = diff / 12.0
+        
+        # Sigmoid to convert to probability
+        over_prob = 1 / (1 + np.exp(-z_score))
+        
+        # Fetch weather (only relevant for outdoor sports like NFL, but code is generic)
+        # For NBA this will return "Dome" or None usually
+        # But we need full team name for weather fetcher
+        # Current fetcher expects full names like "Buffalo Bills"
+        # We have abbreviations.
+        # We need a lookup.
+        
+        weather = {}
+        # Try to find full name
+        home_full = self._teams.get(home_team, {}).get('full_name')
+        if home_full:
+            weather = self.weather_fetcher.get_weather(home_full, datetime.now()) # Using now for simplicity
+        
+        return {
+            'home_team': home_team,
+            'away_team': away_team,
+            'total_line': total_line,
+            'expected_total': expected_total,
+            'over_prob': over_prob,
+            'weather': weather
+        }
+
+    def predict_total_with_odds(
+        self,
+        home_team: str,
+        away_team: str,
+        total_line: float,
+        over_odds: int,
+        under_odds: int
+    ) -> Dict:
+        """
+        Predict total and evaluate betting value.
+        """
+        pred = self.predict_total(home_team, away_team, total_line)
+        
+        # Evaluate
+        eval_result = self.evaluator.evaluate_total(
+            total=total_line,
+            over_prob=pred['over_prob'],
+            over_odds=over_odds,
+            under_odds=under_odds,
+            weather=pred['weather']
+        )
+        
+        pred['betting_analysis'] = {
+            'over_ev': eval_result['over_evaluation']['expected_value'],
+            'under_ev': eval_result['under_evaluation']['expected_value'],
+            'best_bet': eval_result['best_bet']['team'], # "Over X" or "Under X"
+            'recommendation': eval_result['best_bet']['recommendation'],
+            'recommended_size': eval_result['best_bet']['recommended_bet_size'],
+            'note': eval_result['best_bet'].get('note')
+        }
+        
+        return pred
+
     def predict_with_odds(
         self,
         home_team: str,

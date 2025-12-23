@@ -271,12 +271,53 @@ class BettingEvaluator:
         result['spread'] = spread
         return result
     
+    def adjust_for_weather(
+        self,
+        base_prob: float,
+        weather: Optional[Dict],
+        is_over: bool = True
+    ) -> float:
+        """
+        Adjust probability based on weather conditions.
+        
+        Args:
+           base_prob: Model's initial probability
+           weather: Weather dict (temp_f, wind_mph, condition, is_dome)
+           is_over: True if adjusting 'Over' bet, False for 'Under'
+           
+        Returns:
+            Adjusted probability
+        """
+        if not weather or weather.get('is_dome'):
+            return base_prob
+            
+        adj = 0.0
+        wind = weather.get('wind_mph') or 0
+        condition = weather.get('condition')
+        
+        # Penalties for offense (bad for Over)
+        if wind > 15:
+            # High wind kills passing game / kicking
+            adj -= 0.05  # -5% probability for Over
+        
+        if condition in ['Rain', 'Snow', 'Rain/Snow']:
+            adj -= 0.03  # -3% for precipitation
+            
+        # If calculating for 'Over', apply penalty directly
+        # If 'Under', the penalty to Over is a BONUS to Under.
+        if is_over:
+            return max(0.01, min(0.99, base_prob + adj))
+        else:
+            # If Over drops by 5%, Under rises by 5%
+            return max(0.01, min(0.99, base_prob - adj))
+
     def evaluate_total(
         self,
         total: float,
         over_prob: float,
         over_odds: int = -110,
-        under_odds: int = -110
+        under_odds: int = -110,
+        weather: Optional[Dict] = None
     ) -> Dict:
         """
         Evaluate an over/under total bet.
@@ -286,18 +327,26 @@ class BettingEvaluator:
             over_prob: Model's probability of over hitting
             over_odds: American odds for over
             under_odds: American odds for under
+            weather: Optional weather data for adjustment
             
         Returns:
             Dictionary with over and under evaluations
         """
-        under_prob = 1 - over_prob
+        # Apply weather adjustments
+        final_over_prob = self.adjust_for_weather(over_prob, weather, is_over=True)
+        final_under_prob = 1 - final_over_prob
         
         over_eval = self.evaluate_bet(
-            f"Over {total}", over_prob, over_odds, "total"
+            f"Over {total}", final_over_prob, over_odds, "total"
         )
         under_eval = self.evaluate_bet(
-            f"Under {total}", under_prob, under_odds, "total"
+            f"Under {total}", final_under_prob, under_odds, "total"
         )
+        
+        # Add notification if weather impacted
+        if weather and (weather.get('wind_mph', 0) > 15 or weather.get('condition') in ['Rain', 'Snow']):
+            over_eval['note'] = f"Weather Impact: {weather['condition']}, {weather['wind_mph']}mph wind"
+            under_eval['note'] = "Weather Impact: Boosts Under probability"
         
         if over_eval['expected_value'] > under_eval['expected_value']:
             best_bet = over_eval

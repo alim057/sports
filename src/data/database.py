@@ -98,6 +98,10 @@ class Prediction(Base):
     recommended_bet = Column(String(100))
     expected_value = Column(Float)
     
+    # CLV Tracking
+    closing_odds = Column(Integer)  # Odds at game start
+    clv = Column(Float)  # Closing Line Value: (Bet Odds / Closing Odds) - 1
+    
     model_version = Column(String(50))
     created_at = Column(DateTime, default=datetime.now)
 
