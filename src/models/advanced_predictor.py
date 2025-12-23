@@ -14,12 +14,15 @@ import joblib
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+
 from data.nba_fetcher import NBAFetcher
+from data.sport_fetcher import NFLFetcher
 from data.player_fetcher import PlayerFetcher
 from data.odds_fetcher import OddsFetcher
 from data.weather_fetcher import WeatherFetcher
 from data.injury_fetcher import InjuryFetcher
 from features.team_features import TeamFeatureEngine
+from features.nfl_features import NFLFeatureEngine
 from features.player_features import PlayerFeatureEngine
 from models.predictor import GamePredictor
 from betting.evaluator import BettingEvaluator
@@ -28,17 +31,26 @@ from nba_api.stats.static import teams as nba_teams_static
 
 
 class AdvancedPredictor:
-    """Advanced prediction system combining team and player analysis."""
+    """Advanced prediction system combining team and player analysis for multiple sports."""
     
     # XGBoost feature names (must match training)
-    MONEYLINE_FEATURES = [
+    NBA_MONEYLINE_FEATURES = [
         'pts_diff_l10', 'def_diff_l10', 'win_rate_diff',
         'fg_pct_diff', 'reb_diff', 'ast_diff', 'tov_diff',
         'home_win_l10', 'away_win_l10'
     ]
     
+    # NFL Feature names
+    NFL_MONEYLINE_FEATURES = [
+        'HOME_WIN_RATE', 'AWAY_WIN_RATE', 
+        'HOME_PTS_L5', 'AWAY_PTS_L5', 
+        'HOME_PA_L5', 'AWAY_PA_L5', 
+        'PTS_DIFF_L5', 'PA_DIFF_L5'
+    ]
+    
     def __init__(
         self,
+        sport: str = "NBA",
         model_path: Optional[str] = None,
         season: str = "2024-25",
         min_ev_threshold: float = 0.02,
@@ -48,24 +60,43 @@ class AdvancedPredictor:
         Initialize advanced predictor.
         
         Args:
+            sport: "NBA" or "NFL"
             model_path: Path to trained model
-            season: Current NBA season
+            season: Current season (e.g. 2024-25 for NBA, 2024 for NFL)
             min_ev_threshold: Minimum EV for bet recommendations
             bankroll: Bankroll for bet sizing
         """
+        self.sport = sport.upper()
         self.season = season
         
-        # Data fetchers
-        self.nba_fetcher = NBAFetcher()
-        self.player_fetcher = PlayerFetcher()
+        # Common Data fetchers
         self.odds_fetcher = OddsFetcher()
         self.weather_fetcher = WeatherFetcher()
-        self.injury_fetcher = InjuryFetcher()
         
-        # Feature engines
-        self.team_features = TeamFeatureEngine()
-        self.player_features = PlayerFeatureEngine(season)
-        
+        # Sport-specific components
+        if self.sport == "NBA":
+            self.sport_fetcher = NBAFetcher()
+            self.player_fetcher = PlayerFetcher()
+            self.injury_fetcher = InjuryFetcher()
+            self.feature_engine = TeamFeatureEngine()
+            self.player_features = PlayerFeatureEngine(season)
+            self._teams = {t['abbreviation']: t for t in nba_teams_static.get_teams()}
+        elif self.sport == "NFL":
+            self.sport_fetcher = NFLFetcher()
+            self.player_fetcher = None # NFL Player fetcher Todo
+            self.injury_fetcher = None # NFL Injury fetcher Todo
+            self.feature_engine = NFLFeatureEngine()
+            self.player_features = None
+            
+            # Load NFL teams cache
+            teams_df = self.sport_fetcher.get_all_teams()
+            if not teams_df.empty:
+                self._teams = teams_df.set_index('team_abbr').to_dict('index')
+            else:
+                self._teams = {}
+        else:
+            raise ValueError(f"Unsupported sport: {sport}")
+
         # Legacy model and evaluator
         self.predictor = GamePredictor(model_path=model_path)
         self.evaluator = BettingEvaluator(
@@ -77,7 +108,6 @@ class AdvancedPredictor:
         self.xgb_models = self._load_xgboost_models()
         
         # Team lookup cache
-        self._teams = {t['abbreviation']: t for t in nba_teams_static.get_teams()}
         self._team_stats_cache = {}
     
     def _load_xgboost_models(self) -> Dict:
@@ -85,18 +115,20 @@ class AdvancedPredictor:
         models = {}
         model_dir = Path(__file__).parent.parent.parent / "models"
         
+        sport_prefix = self.sport.lower()
+        
         for name in ['moneyline', 'spread', 'totals']:
-            path = model_dir / f"nba_{name}_xgb.joblib"
+            path = model_dir / f"{sport_prefix}_{name}_xgb.joblib"
             if path.exists():
                 try:
                     data = joblib.load(path)
                     models[name] = data
-                    print(f"Loaded XGBoost {name} model")
+                    print(f"Loaded XGBoost {name} model for {self.sport}")
                 except Exception as e:
                     print(f"Warning: Could not load {name} model: {e}")
         
         if not models:
-            print("No XGBoost models found, using heuristic fallback")
+            print(f"No XGBoost models found for {self.sport}, using heuristic fallback")
         
         return models
     
@@ -108,46 +140,35 @@ class AdvancedPredictor:
         expected by the trained XGBoost models.
         """
         try:
-            # Get raw stats with defaults
-            home_pts = home_stats.get('PTS_L10', home_stats.get('PTS_L5', 105))
-            away_pts = away_stats.get('PTS_L10', away_stats.get('PTS_L5', 105))
-            home_win = home_stats.get('HOME_WIN_RATE', 0.5)
-            away_win = away_stats.get('AWAY_WIN_RATE', 0.5)
+            # Delegate to feature engine to get raw named features
+            # This ensures consistency between training processing and prediction
+            features = self.feature_engine.build_matchup_features(home_stats, away_stats)
             
-            # For stats we don't have directly, use defaults
-            # In training, we had access to full game logs. Here we approximate.
-            home_opp_pts = 105  # Default opponent pts allowed
-            away_opp_pts = 105
+            # For NBA, we might need to do some extra mapping if the feature engine output
+            # doesn't match the XGB model input exactly (legacy issue).
+            # But ideally feature_engine.build_matchup_features returns what we need.
             
-            features = {
-                # Scoring
-                'home_pts_l10': home_pts,
-                'away_pts_l10': away_pts,
-                'pts_diff_l10': home_pts - away_pts,
-                
-                # Defense (approximated)
-                'home_opp_pts_l10': home_opp_pts,
-                'away_opp_pts_l10': away_opp_pts,
-                'def_diff_l10': away_opp_pts - home_opp_pts,
-                
-                # Win rates
-                'home_win_l10': home_win,
-                'away_win_l10': away_win,
-                'win_rate_diff': home_win - away_win,
-                
-                # Other stats (use small values to avoid model issues)
-                'fg_pct_diff': 0.0,
-                'reb_diff': 0.0,
-                'ast_diff': 0.0,
-                'tov_diff': 0.0,
-                
-                # Totals features
-                'combined_pts_l10': home_pts + away_pts,
-                'combined_def_l10': home_opp_pts + away_opp_pts,
-                'home_fg_pct_l10': 0.45,
-                'away_fg_pct_l10': 0.45,
-            }
+            if self.sport == "NBA":
+               # Map standard FeatureEngine outputs to Legacy NBA Model inputs
+               # Model expects: ['pts_diff_l10', 'def_diff_l10', 'win_rate_diff', 'fg_pct_diff', 'reb_diff', 'ast_diff', 'tov_diff', 'home_win_l10', 'away_win_l10']
+               # FeatureEngine provides: ['PTS_DIFF_L10', 'HOME_WIN_RATE', 'AWAY_WIN_RATE', 'WIN_RATE_DIFF'...]
+               
+               mapped_features = {
+                   'pts_diff_l10': features.get('PTS_DIFF_L10', 0),
+                   # We don't have def_diff directly in new engine, approximate with PTS allowed diff?
+                   # Legacy model had 'def_diff'. Let's use PA_DIFF if available or inverse of pts diff
+                   'def_diff_l10': -features.get('PTS_DIFF_L10', 0), # Crude approx if PA not avail
+                   'win_rate_diff': features.get('WIN_RATE_DIFF', 0),
+                   'fg_pct_diff': 0, # Not in new engine yet
+                   'reb_diff': features.get('REB_DIFF_L10', 0),
+                   'ast_diff': features.get('AST_DIFF_L10', 0),
+                   'tov_diff': 0,
+                   'home_win_l10': features.get('HOME_WIN_RATE', 0.5),
+                   'away_win_l10': features.get('AWAY_WIN_RATE', 0.5)
+               }
+               return mapped_features 
             
+            # For NFL, the feature engine returns exactly what we trained on.
             return features
             
         except Exception as e:
@@ -156,6 +177,9 @@ class AdvancedPredictor:
     
     def get_team_id(self, team_abbr: str) -> Optional[int]:
         """Get team ID from abbreviation."""
+        if self.sport == "NFL":
+            return team_abbr # NFL libraries use abbr as ID usually
+            
         team = self._teams.get(team_abbr.upper())
         return team['id'] if team else None
     
@@ -168,87 +192,105 @@ class AdvancedPredictor:
     ) -> pd.Series:
         """
         Get recent performance stats for a team.
-        
-        Args:
-            team_abbr: Team abbreviation (e.g., 'LAL')
-            n_games: Number of recent games to consider
-            target_date: Date of the game being predicted (YYYY-MM-DD). Defaults to today.
-            
-        Returns:
-            Series with calculated features
         """
         if team_abbr in self._team_stats_cache and target_date is None:
             return self._team_stats_cache[team_abbr]
         
         team_id = self.get_team_id(team_abbr)
+        # For NFL team_id is the abbr
+        if self.sport == 'NFL': 
+            team_id = team_abbr
+
         if not team_id:
             return pd.Series()
         
         try:
-            # Get game log
-            game_log = self.nba_fetcher.get_team_game_log(team_id, self.season)
-            
-            if game_log.empty or len(game_log) < 5:
-                # Try fetching previous season if early in current season
-                # For now, just return empty to fail gracefully
-                return pd.Series()
-            
-            # Ensure GAME_DATE is datetime
-            game_log['GAME_DATE'] = pd.to_datetime(game_log['GAME_DATE'])
-            
-            # Calculate rolling stats
-            recent = game_log.head(n_games)
-            
-            # --- Advanced Features: B2B, Rest, Travel ---
-            if target_date:
-                game_date = pd.to_datetime(target_date)
-            else:
-                game_date = pd.Timestamp.now()
+            if self.sport == "NBA":
+                # Get game log
+                game_log = self.sport_fetcher.get_team_game_log(team_id, self.season)
                 
-            last_game = game_log.iloc[0]
-            last_game_date = last_game['GAME_DATE']
-            
-            # Days since last game
-            days_rest = (game_date - last_game_date).days
-            
-            # B2B check
-            is_b2b = 1 if days_rest == 1 else 0
-            
-            # Rest days (0 means B2B, 1 means 1 day off, etc.)
-            rest_days = max(0, days_rest - 1)
-            
-            # Travel Distance
-            # If last game was HOME, travel is from Home -> Current (handled in loop context or assumed home)
-            # If last game was AWAY, travel is from Last Opponent -> Current
-            # Note: This checks travel TO the upcoming game. We need to know where the upcoming game is.
-            # get_team_recent_stats doesn't know if the upcoming game is Home or Away.
-            # We'll calculate "Distance Traveled Recently" or similar, 
-            # OR we return coordinates/last location for the caller to determine specific travel.
-            
-            # Simplified approach: Return last game location
-            last_game_is_home = last_game['IS_HOME']
-            last_opponent = last_game['MATCHUP'].split(' ')[-1] # 'vs. GSW' or '@ GSW' -> GSW
-            
-            # If last game was home, they are at their home stadium.
-            # If last game was away, they are at the opponent's stadium (approximated).
-            current_location_abbr = team_abbr if last_game_is_home else last_opponent
-            
-            stats = {
-                'PTS_L5': game_log['PTS'].head(5).mean(),
-                'PTS_L10': game_log['PTS'].head(10).mean(),
-                'REB_L5': game_log['REB'].head(5).mean(),
-                'REB_L10': game_log['REB'].head(10).mean(),
-                'AST_L5': game_log['AST'].head(5).mean(),
-                'AST_L10': game_log['AST'].head(10).mean(),
-                'HOME_WIN_RATE': (game_log[game_log['IS_HOME']]['WL'] == 'W').mean() if len(game_log[game_log['IS_HOME']]) > 0 else 0.5,
-                'AWAY_WIN_RATE': (game_log[~game_log['IS_HOME']]['WL'] == 'W').mean() if len(game_log[~game_log['IS_HOME']]) > 0 else 0.5,
+                if game_log.empty or len(game_log) < 5:
+                    return pd.Series()
                 
-                # New Features
-                'REST_DAYS': rest_days,
-                'IS_B2B': is_b2b,
-                'LAST_LOCATION': current_location_abbr, # Returns team abbr of location
-                'STREAK': self._calculate_streak(game_log)
-            }
+                # Ensure GAME_DATE is datetime
+                game_log['GAME_DATE'] = pd.to_datetime(game_log['GAME_DATE'])
+                
+                # Calculate rolling stats
+                recent = game_log.head(n_games)
+                
+                # --- Advanced Features: B2B, Rest, Travel ---
+                if target_date:
+                    game_date = pd.to_datetime(target_date)
+                else:
+                    game_date = pd.Timestamp.now()
+                    
+                last_game = game_log.iloc[0]
+                last_game_date = last_game['GAME_DATE']
+                
+                # Days since last game
+                days_rest = (game_date - last_game_date).days
+                
+                # B2B check
+                is_b2b = 1 if days_rest == 1 else 0
+                
+                # Rest days (0 means B2B, 1 means 1 day off, etc.)
+                rest_days = max(0, days_rest - 1)
+                
+                # Travel Distance
+                last_game_is_home = last_game['IS_HOME']
+                last_opponent = last_game['MATCHUP'].split(' ')[-1]
+                
+                current_location_abbr = team_abbr if last_game_is_home else last_opponent
+                
+                stats = {
+                    'PTS_L5': game_log['PTS'].head(5).mean(),
+                    'PTS_L10': game_log['PTS'].head(10).mean(),
+                    'REB_L5': game_log['REB'].head(5).mean(),
+                    'REB_L10': game_log['REB'].head(10).mean(),
+                    'AST_L5': game_log['AST'].head(5).mean(),
+                    'AST_L10': game_log['AST'].head(10).mean(),
+                    'HOME_WIN_RATE': (game_log[game_log['IS_HOME']]['WL'] == 'W').mean() if len(game_log[game_log['IS_HOME']]) > 0 else 0.5,
+                    'AWAY_WIN_RATE': (game_log[~game_log['IS_HOME']]['WL'] == 'W').mean() if len(game_log[~game_log['IS_HOME']]) > 0 else 0.5,
+                    
+                    # New Features
+                    'REST_DAYS': rest_days,
+                    'IS_B2B': is_b2b,
+                    'LAST_LOCATION': current_location_abbr, # Returns team abbr of location
+                    'STREAK': self._calculate_streak(game_log)
+                }
+            
+            elif self.sport == "NFL":
+                # NFL Logic
+                # get_team_games returns a df of games for that team
+                games_df = self.sport_fetcher.get_team_games(team_id, self.season)
+                
+                if games_df.empty:
+                    return pd.Series()
+                
+                wins = 0
+                total = 0
+                
+                scores = [] # My scores
+                allowed = [] # Opponent scores
+                
+                for _, game in games_df.iterrows():
+                    is_home = (game['home_team'] == team_abbr)
+                    my_score = game['home_score'] if is_home else game['away_score']
+                    opp_score = game['away_score'] if is_home else game['home_score']
+                    
+                    if pd.notna(my_score) and pd.notna(opp_score):
+                        if my_score > opp_score: wins += 1
+                        total += 1
+                        scores.append(my_score)
+                        allowed.append(opp_score)
+                        
+                # Stats calculation
+                stats = {
+                    'WIN_RATE': wins / total if total > 0 else 0.5,
+                    'PTS_L5': np.mean(scores[-5:]) if scores else 20.0,
+                    'PA_L5': np.mean(allowed[-5:]) if allowed else 20.0, # Added Points Allowed
+                    'LAST_LOCATION': team_abbr # simplistic
+                }
             
             result = pd.Series(stats)
             if target_date is None:
@@ -307,8 +349,10 @@ class AdvancedPredictor:
             home_stats['TRAVEL_DIST'] = home_travel_dist
             away_stats['TRAVEL_DIST'] = away_travel_dist
             
+            
             # Combine into features dictionary
-            team_feats = self.team_features.build_matchup_features(home_stats, away_stats)
+            # feature_engine is either TeamFeatureEngine or NFLFeatureEngine based on init
+            team_feats = self.feature_engine.build_matchup_features(home_stats, away_stats)
             
             # Add new situational features to dictionary for transparency
             team_feats['HOME_REST_DAYS'] = home_stats.get('REST_DAYS', 2)
@@ -326,13 +370,13 @@ class AdvancedPredictor:
             
             team_feats['REST_ADVANTAGE'] = rest_diff + b2b_advantage + travel_advantage
 
-            # Get player analysis if enabled
+            # Get player analysis if enabled and supported
             player_analysis = {}
-            if include_player_features:
+            if include_player_features and self.player_fetcher:
                 try:
                     # Get active roster (could filter by injuries here too)
-                    home_roster = self.nba_fetcher.get_team_roster(self.get_team_id(home_team))
-                    away_roster = self.nba_fetcher.get_team_roster(self.get_team_id(away_team))
+                    home_roster = self.sport_fetcher.get_team_roster(self.get_team_id(home_team))
+                    away_roster = self.sport_fetcher.get_team_roster(self.get_team_id(away_team))
                     
                     # Fetch recent stats for top 8 players
                     # ... implementation details ...
@@ -342,16 +386,19 @@ class AdvancedPredictor:
             
             # Get Injury Analysis
             injury_analysis = {}
-            try:
-                injury_data = self.injury_fetcher.get_matchup_injury_comparison(home_team, away_team)
-                injury_analysis = {
-                    'home_impact': injury_data['home_injuries']['impact_score'],
-                    'away_impact': injury_data['away_injuries']['impact_score'],
-                    'net_impact_prob': injury_data['home_advantage_pct'] # e.g. -0.05 if home has more injuries
-                }
-            except Exception as e:
-                print(f"Warning: Injury fetch error: {e}")
-                injury_analysis = {'net_impact_prob': 0}
+            if self.injury_fetcher:
+                try:
+                    injury_data = self.injury_fetcher.get_matchup_injury_comparison(home_team, away_team)
+                    injury_analysis = {
+                        'home_impact': injury_data['home_injuries']['impact_score'],
+                        'away_impact': injury_data['away_injuries']['impact_score'],
+                        'net_impact_prob': injury_data['home_advantage_pct'] # e.g. -0.05 if home has more injuries
+                    }
+                except Exception as e:
+                    print(f"Warning: Injury fetch error: {e}")
+                    injury_analysis = {'net_impact_prob': 0}
+            else:
+                 injury_analysis = {'net_impact_prob': 0}
 
             # Make prediction using XGBoost model if available
             home_win_prob = None
@@ -367,10 +414,20 @@ class AdvancedPredictor:
                     if xgb_features is not None:
                         model_data = self.xgb_models['moneyline']
                         model = model_data['model']
-                        feature_names = model_data.get('features', self.MONEYLINE_FEATURES)
+                        
+                        # Get feature names from model or use defaults based on sport
+                        if self.sport == "NBA":
+                            feature_names = model_data.get('features', self.NBA_MONEYLINE_FEATURES)
+                        else:
+                            feature_names = model_data.get('features', self.NFL_MONEYLINE_FEATURES)
                         
                         # Create DataFrame with correct feature order
-                        X = pd.DataFrame([xgb_features])[feature_names]
+                        X = pd.DataFrame([xgb_features])
+                        # Filter/Order columns only if X has them
+                        available_cols = [c for c in feature_names if c in X.columns]
+                        if len(available_cols) == len(feature_names):
+                             X = X[feature_names]
+                        
                         home_win_prob = model.predict_proba(X)[0][1]
                         model_used = 'xgboost'
                 except Exception as e:

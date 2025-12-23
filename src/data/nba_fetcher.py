@@ -106,7 +106,7 @@ class NBAFetcher:
         return games_df
     
     def get_todays_games(self) -> pd.DataFrame:
-        """Get today's scheduled games."""
+        """Get today's scheduled games (Raw API output)."""
         self._rate_limit()
         
         today = datetime.now().strftime('%Y-%m-%d')
@@ -114,6 +114,37 @@ class NBAFetcher:
         
         games_df = scoreboard.get_data_frames()[0]  # GameHeader
         return games_df
+
+    def get_schedule(self, date: datetime = None) -> pd.DataFrame:
+        """
+        Get game schedule for a date with standard columns.
+        Returns: DataFrame with ['home_team', 'away_team', 'game_id']
+        """
+        # Note: nba_api ScoreboardV2 takes a date, default is today.
+        
+        if date is None:
+            date = datetime.now()
+            
+        date_str = date.strftime('%Y-%m-%d')
+        
+        self._rate_limit()
+        scoreboard = scoreboardv2.ScoreboardV2(game_date=date_str)
+        games_df = scoreboard.get_data_frames()[0]
+        
+        if games_df.empty:
+            return pd.DataFrame()
+            
+        # Map IDs to Abbreviations
+        teams_df = self.get_all_teams()
+        id_to_abbr = dict(zip(teams_df['id'], teams_df['abbreviation']))
+        
+        # Create standard dataframe
+        result = pd.DataFrame()
+        result['game_id'] = games_df['GAME_ID']
+        result['home_team'] = games_df['HOME_TEAM_ID'].map(id_to_abbr)
+        result['away_team'] = games_df['VISITOR_TEAM_ID'].map(id_to_abbr)
+        
+        return result
     
     def get_standings(self, season: str = "2024-25") -> pd.DataFrame:
         """Get current league standings."""

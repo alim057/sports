@@ -56,7 +56,7 @@ Then continue with the next recommended steps listed there.
 1. **Create Webhook:** Discord Server → Channel Settings → Integrations → Webhooks → New
 2. **Add Secrets:** https://github.com/alim057/sports/settings/secrets/actions
    - `ODDS_API_KEY` = `bd6934ca89728830cd789ca6203dbe8b`
-   - `DISCORD_WEBHOOK` = your webhook URL
+   - `DISCORD_WEBHOOK` = `https://discord.com/api/webhooks/1452848600378773596/o3HNOLm0blvMdozvLywK2n8J4KBylG1VvMetWEzHFl0qwHt7ucvVnyQMim9SnF0OY7-4`
 3. **Done!** Alerts run every 15 min automatically.
 
 ---

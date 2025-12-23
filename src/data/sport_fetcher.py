@@ -95,6 +95,10 @@ class NFLFetcher(SportFetcher):
     SPORT_NAME = "NFL"
     SPORT_KEY = "americanfootball_nfl"
     
+    
+    TEAMS_URL = "https://github.com/nflverse/nflverse-data/releases/download/teams/teams_colors_logos.csv"
+    SCHEDULE_URL = "http://www.habitatring.com/games.csv"
+    
     def __init__(self):
         super().__init__()
         try:
@@ -102,15 +106,26 @@ class NFLFetcher(SportFetcher):
             self.nfl = nfl
             self._available = True
         except ImportError:
-            print("Warning: nfl_data_py not installed. Run: pip install nfl_data_py")
+            print("Warning: nfl_data_py not installed. Using fallback CSV downloader.")
             self._available = False
+            self.nfl = None
+            
+    def _fetch_from_url(self, url: str) -> pd.DataFrame:
+        """Helper to fetch CSV directly."""
+        try:
+            return pd.read_csv(url)
+        except Exception as e:
+            print(f"Error fetching from {url}: {e}")
+            return pd.DataFrame()
     
     def get_all_teams(self) -> pd.DataFrame:
-        if not self._available:
-            return pd.DataFrame()
-        
         try:
-            teams = self.nfl.import_team_desc()
+            if self._available:
+                teams = self.nfl.import_team_desc()
+            else:
+                teams = self._fetch_from_url(self.TEAMS_URL)
+                
+            if teams.empty: return pd.DataFrame()
             return teams[['team_abbr', 'team_name', 'team_conf', 'team_division']]
         except Exception as e:
             print(f"Error fetching NFL teams: {e}")
@@ -121,12 +136,18 @@ class NFLFetcher(SportFetcher):
         team_id: str, 
         season: str = None
     ) -> pd.DataFrame:
-        if not self._available:
-            return pd.DataFrame()
-        
         season = season or "2024"
         try:
-            schedule = self.nfl.import_schedules([int(season)])
+            if self._available:
+                schedule = self.nfl.import_schedules([int(season)])
+            else:
+                schedule = self._fetch_from_url(self.SCHEDULE_URL)
+                # Filter by season if using full schedule CSV
+                if not schedule.empty and 'season' in schedule.columns:
+                    schedule = schedule[schedule['season'] == int(season)]
+                    
+            if schedule.empty: return pd.DataFrame()
+            
             team_games = schedule[
                 (schedule['home_team'] == team_id) | 
                 (schedule['away_team'] == team_id)
@@ -137,12 +158,15 @@ class NFLFetcher(SportFetcher):
             return pd.DataFrame()
     
     def get_schedule(self, date: datetime = None) -> pd.DataFrame:
-        if not self._available:
-            return pd.DataFrame()
-        
         date = date or datetime.now()
         try:
-            schedule = self.nfl.import_schedules([date.year])
+            if self._available:
+                schedule = self.nfl.import_schedules([date.year])
+            else:
+                schedule = self._fetch_from_url(self.SCHEDULE_URL)
+                if not schedule.empty and 'season' in schedule.columns:
+                    schedule = schedule[schedule['season'] == date.year]
+
             if not schedule.empty:
                 schedule['gameday'] = pd.to_datetime(schedule['gameday'])
                 return schedule[schedule['gameday'].dt.date == date.date()]
@@ -152,6 +176,7 @@ class NFLFetcher(SportFetcher):
             return pd.DataFrame()
     
     def get_standings(self, season: str = None) -> pd.DataFrame:
+        # Fallback for standings is complex without the lib, return empty or implement later
         if not self._available:
             return pd.DataFrame()
         
@@ -164,11 +189,16 @@ class NFLFetcher(SportFetcher):
             return pd.DataFrame()
     
     def _fetch_season_games(self, season: str) -> pd.DataFrame:
-        if not self._available:
-            return pd.DataFrame()
-        
         try:
-            schedule = self.nfl.import_schedules([int(season)])
+            if self._available:
+                schedule = self.nfl.import_schedules([int(season)])
+            else:
+                schedule = self._fetch_from_url(self.SCHEDULE_URL)
+                if not schedule.empty and 'season' in schedule.columns:
+                    schedule = schedule[schedule['season'] == int(season)]
+
+            if schedule.empty: return pd.DataFrame()
+
             # Filter to completed games
             completed = schedule[schedule['result'].notna()]
             return completed

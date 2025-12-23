@@ -344,9 +344,16 @@ class BettingEvaluator:
         )
         
         # Add notification if weather impacted
-        if weather and (weather.get('wind_mph', 0) > 15 or weather.get('condition') in ['Rain', 'Snow']):
-            over_eval['note'] = f"Weather Impact: {weather['condition']}, {weather['wind_mph']}mph wind"
-            under_eval['note'] = "Weather Impact: Boosts Under probability"
+        if weather:
+            wind = weather.get('wind_mph')
+            if wind is None: wind = 0
+            
+            cond = weather.get('condition', '')
+            if cond is None: cond = ''
+            
+            if wind > 15 or cond in ['Rain', 'Snow']:
+                over_eval['note'] = f"Weather Impact: {cond}, {wind}mph wind"
+                under_eval['note'] = "Weather Impact: Boosts Under probability"
         
         if over_eval['expected_value'] > under_eval['expected_value']:
             best_bet = over_eval
