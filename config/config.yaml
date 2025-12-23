@@ -37,7 +37,7 @@ database:
 notifications:
   discord_webhook: "https://discord.com/api/webhooks/1452848600378773596/o3HNOLm0blvMdozvLywK2n8J4KBylG1VvMetWEzHFl0qwHt7ucvVnyQMim9SnF0OY7-4"
   # To get a webhook: Discord Server Settings > Integrations > Webhooks > New Webhook
-  min_ev_for_alert: 0.05  # Only alert on 5%+ EV bets
+  min_ev_for_alert: 0.07  # Only alert on 7%+ EV bets (stronger edge)
   sports:
     - nba
     - nfl
