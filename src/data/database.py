@@ -106,6 +106,76 @@ class Prediction(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+# ==================== SGO API Models ====================
+
+class SGOEvent(Base):
+    """Game event from Sports Game Odds API."""
+    __tablename__ = 'sgo_events'
+    
+    event_id = Column(String(50), primary_key=True)
+    league_id = Column(String(20), nullable=False)
+    
+    home_team_id = Column(String(100))
+    away_team_id = Column(String(100))
+    home_team_name = Column(String(100))
+    away_team_name = Column(String(100))
+    
+    start_time = Column(DateTime)
+    status = Column(String(30))  # Scheduled, Live, Final, Postponed
+    
+    home_score = Column(Integer)
+    away_score = Column(Integer)
+    
+    odds_available = Column(Boolean, default=False)
+    
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class SGOOdds(Base):
+    """Odds snapshot from Sports Game Odds API for CLV tracking."""
+    __tablename__ = 'sgo_odds'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(50), nullable=False)
+    
+    odd_id = Column(String(150))  # e.g., "points-game-ou-over"
+    market_name = Column(String(150))  # e.g., "Over/Under"
+    stat_id = Column(String(50))  # e.g., "points"
+    bet_type = Column(String(20))  # ml, spread, ou
+    side = Column(String(20))  # home, away, over, under
+    
+    bookmaker = Column(String(50))
+    book_odds = Column(String(15))  # American odds: "+150", "-110"
+    fair_odds = Column(String(15))
+    line = Column(Float)  # Spread or total line
+    
+    fetched_at = Column(DateTime, default=datetime.now)
+
+
+class SGOPlayerProp(Base):
+    """Player prop bet from Sports Game Odds API."""
+    __tablename__ = 'sgo_player_props'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(50), nullable=False)
+    
+    player_id = Column(String(100))
+    player_name = Column(String(100))
+    team_id = Column(String(100))
+    
+    stat_type = Column(String(50))  # points, rebounds, assists, etc.
+    period = Column(String(20))  # game, 1h, 1q, etc.
+    bet_type = Column(String(20))  # ou (over/under)
+    side = Column(String(20))  # over, under
+    
+    line = Column(Float)
+    book_odds = Column(String(15))
+    fair_odds = Column(String(15))
+    
+    fetched_at = Column(DateTime, default=datetime.now)
+
+
 class Database:
     """Database manager for the betting system."""
     
@@ -286,6 +356,136 @@ class Database:
             'correct': correct,
             'accuracy': correct / total if total > 0 else 0.0
         }
+    
+    # ==================== SGO API Methods ====================
+    
+    def save_sgo_events(self, events_df: pd.DataFrame):
+        """Save SGO events from DataFrame."""
+        # SGOEvent is defined in this same file
+        
+        for _, row in events_df.iterrows():
+            event_id = row.get('event_id')
+            if not event_id:
+                continue
+            
+            # Check if event exists
+            existing = self.session.query(SGOEvent).filter_by(event_id=event_id).first()
+            
+            if existing:
+                # Update existing event
+                existing.status = row.get('status', existing.status)
+                existing.home_score = row.get('home_score', existing.home_score)
+                existing.away_score = row.get('away_score', existing.away_score)
+                existing.odds_available = row.get('odds_available', existing.odds_available)
+            else:
+                # Parse start_time
+                start_time = row.get('start_time')
+                if isinstance(start_time, str):
+                    try:
+                        start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    except:
+                        start_time = None
+                
+                event = SGOEvent(
+                    event_id=event_id,
+                    league_id=row.get('league', ''),
+                    home_team_id=row.get('home_team', ''),
+                    away_team_id=row.get('away_team', ''),
+                    home_team_name=row.get('home_team', ''),
+                    away_team_name=row.get('away_team', ''),
+                    start_time=start_time,
+                    status=row.get('status', 'Scheduled'),
+                    odds_available=row.get('odds_available', False)
+                )
+                self.session.add(event)
+        
+        self.session.commit()
+    
+    def save_sgo_odds(self, odds_df: pd.DataFrame):
+        """Save SGO odds snapshots for CLV tracking."""
+        # SGOOdds is defined in this same file
+        
+        for _, row in odds_df.iterrows():
+            odds = SGOOdds(
+                event_id=row.get('event_id'),
+                odd_id=row.get('odd_id'),
+                market_name=row.get('market_name'),
+                stat_id=row.get('stat_id'),
+                bet_type=row.get('bet_type'),
+                side=row.get('side'),
+                bookmaker=row.get('bookmaker'),
+                book_odds=row.get('book_odds'),
+                fair_odds=row.get('fair_odds'),
+                line=row.get('line'),
+                fetched_at=datetime.now()
+            )
+            self.session.add(odds)
+        
+        self.session.commit()
+    
+    def save_sgo_player_props(self, props_df: pd.DataFrame):
+        """Save SGO player prop data."""
+        # SGOPlayerProp is defined in this same file
+        
+        for _, row in props_df.iterrows():
+            prop = SGOPlayerProp(
+                event_id=row.get('event_id'),
+                player_id=row.get('player_id'),
+                player_name=row.get('player_name'),
+                team_id=row.get('team_id'),
+                stat_type=row.get('stat_type'),
+                period=row.get('period'),
+                bet_type=row.get('bet_type'),
+                side=row.get('side'),
+                line=row.get('line'),
+                book_odds=row.get('book_odds'),
+                fair_odds=row.get('fair_odds'),
+                fetched_at=datetime.now()
+            )
+            self.session.add(prop)
+        
+        self.session.commit()
+    
+    def get_sgo_events(self, league: Optional[str] = None, upcoming_only: bool = False) -> pd.DataFrame:
+        """Get SGO events as DataFrame."""
+        # SGOEvent is defined in this same file
+        
+        query = self.session.query(SGOEvent)
+        
+        if league:
+            query = query.filter(SGOEvent.league_id == league.upper())
+        
+        if upcoming_only:
+            query = query.filter(SGOEvent.status == 'Scheduled')
+        
+        events = query.order_by(SGOEvent.start_time).all()
+        
+        if not events:
+            return pd.DataFrame()
+        
+        return pd.DataFrame([{
+            c.name: getattr(e, c.name)
+            for c in SGOEvent.__table__.columns
+        } for e in events])
+    
+    def get_sgo_odds_history(self, event_id: str) -> pd.DataFrame:
+        """Get odds history for an event (for CLV calculation)."""
+        # SGOOdds is defined in this same file
+        
+        odds_records = (
+            self.session.query(SGOOdds)
+            .filter(SGOOdds.event_id == event_id)
+            .order_by(SGOOdds.fetched_at)
+            .all()
+        )
+        
+        if not odds_records:
+            return pd.DataFrame()
+        
+        return pd.DataFrame([{
+            c.name: getattr(o, c.name)
+            for c in SGOOdds.__table__.columns
+        } for o in odds_records])
     
     def close(self):
         """Close database session."""

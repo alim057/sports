@@ -1,0 +1,97 @@
+name: SGO Odds Fetcher
+
+on:
+  schedule:
+    # NBA Season (Oct-Jun): Daily 6 PM - 1 AM ET (23:00-06:00 UTC)
+    - cron: '*/15 22-23,0-6 * 10-12,1-6 *'
+    
+    # NFL Season (Sep-Feb): Sun/Mon/Thu evenings
+    # Sundays: 1 PM - 11 PM ET (18:00-04:00 UTC)
+    - cron: '*/15 17-23,0-4 * 9-12,1-2 0'
+    # Monday/Thursday Night Football: 8 PM - 12 AM ET
+    - cron: '*/15 0-5 * 9-12,1-2 1,4'
+    
+    # NCAAF Season (Aug-Jan): Saturdays all day
+    - cron: '*/15 * * 8-12,1 6'
+    
+    # MLB Season (Apr-Oct): Daily 7 PM - 12 AM ET (23:00-05:00 UTC)
+    - cron: '*/15 23,0-5 * 4-10 *'
+    
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      sports:
+        description: 'Sports to fetch (comma-separated: nba,nfl,ncaaf,mlb)'
+        required: false
+        default: ''
+      force_all:
+        description: 'Fetch all sports regardless of season'
+        required: false
+        default: 'false'
+        type: boolean
+      fetch_props:
+        description: 'Also fetch player props'
+        required: false
+        default: 'true'
+        type: boolean
+
+jobs:
+  fetch-sgo-odds:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas sqlalchemy pyyaml
+
+      - name: Fetch SGO Odds
+        env:
+          SGO_API_KEY: ${{ secrets.SGO_API_KEY }}
+        run: |
+          # Build command arguments
+          ARGS="--save-db"
+          
+          if [ "${{ github.event.inputs.force_all }}" = "true" ]; then
+            ARGS="$ARGS --force-all"
+          fi
+          
+          if [ "${{ github.event.inputs.fetch_props }}" = "true" ] || [ -z "${{ github.event.inputs.fetch_props }}" ]; then
+            ARGS="$ARGS --props"
+          fi
+          
+          if [ -n "${{ github.event.inputs.sports }}" ]; then
+            SPORTS="${{ github.event.inputs.sports }}"
+            ARGS="$ARGS --sports ${SPORTS//,/ }"
+          fi
+          
+          python scripts/run_sgo_fetch.py $ARGS
+
+      - name: Commit database updates
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Only commit if there are changes
+          if [ -f data/betting.db ]; then
+            git add data/betting.db
+            git diff --staged --quiet || git commit -m "SGO odds fetch $(date +'%Y-%m-%d %H:%M')"
+            git push
+          fi
+
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sgo-fetch-logs-${{ github.run_id }}
+          path: |
+            data/betting.db
+          retention-days: 7

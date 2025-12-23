@@ -4,6 +4,12 @@
 odds_api:
   api_key: "YOUR_ODDS_API_KEY_HERE"  # Get from https://the-odds-api.com/
   base_url: "https://api.the-odds-api.com/v4"
+
+# Sports Game Odds API (Primary)
+sgo_api:
+  api_key: "${SGO_API_KEY}"  # Set via environment variable
+  base_url: "https://api.sportsgameodds.com/v2"
+  rate_limit_delay: 7  # Seconds between requests (10/min limit)
   
 # NBA Settings
 nba:
