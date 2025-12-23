@@ -32,3 +32,14 @@ betting:
 # Database
 database:
   path: "./data/betting.db"
+
+# Notifications
+notifications:
+  discord_webhook: ""  # Paste your Discord webhook URL here
+  # To get a webhook: Discord Server Settings > Integrations > Webhooks > New Webhook
+  min_ev_for_alert: 0.05  # Only alert on 5%+ EV bets
+  sports:
+    - nba
+    - nfl
+    - nhl
+    - ncaaf

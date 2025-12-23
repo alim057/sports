@@ -47,3 +47,25 @@ sports-betting-predictor/
 
 - **NBA Stats**: No API key required (`nba_api` is free)
 - **The Odds API**: Free tier (500 calls/month) - https://the-odds-api.com/
+
+## Discord Alerts Setup
+
+Get real-time betting alerts sent to your phone via Discord:
+
+1. **Create a Discord Webhook:**
+   - Go to your Discord server → Settings → Integrations → Webhooks
+   - Click "New Webhook", name it (e.g., "Betting Bot"), copy the URL
+
+2. **Add GitHub Secrets** (for automated alerts every 15 min):
+   - Go to your GitHub repo → Settings → Secrets and variables → Actions
+   - Add these secrets:
+     - `ODDS_API_KEY`: Your The Odds API key
+     - `DISCORD_WEBHOOK`: Your Discord webhook URL
+
+3. **Done!** GitHub Actions will now check for +EV bets every 15 minutes and alert you on Discord.
+
+## Live Dashboard
+
+- **Local:** `python dashboard/server.py` → http://localhost:5000
+- **Deployed:** https://sports-oor2.onrender.com/
+
