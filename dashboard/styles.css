@@ -365,6 +365,11 @@ body {
     color: var(--warning);
 }
 
+.bet-type-total {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--success);
+}
+
 /* Modal */
 .modal-overlay {
     display: none;

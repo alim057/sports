@@ -187,6 +187,27 @@ async function loadAllBets() {
         }
     }
 
+    // Fetch totals (over/under) edges
+    for (const sport of sports) {
+        try {
+            const response = await fetch(`${API_BASE}/api/totals-analysis?sport=${sport}`);
+            const data = await response.json();
+
+            if (data.edges) {
+                data.edges.forEach(edge => {
+                    allBets.push({
+                        ...edge,
+                        sport: sport.toUpperCase(),
+                        betType: 'total',
+                        team: `${edge.pick} ${edge.line}`  // Display as "OVER 220.5"
+                    });
+                });
+            }
+        } catch (e) {
+            console.log(`${sport} totals error:`, e);
+        }
+    }
+
     // Sort by EV descending
     allBets.sort((a, b) => b.ev - a.ev);
 
@@ -248,7 +269,17 @@ function renderBets(bets) {
         const spreadInfo = bet.betType === 'spread' && bet.spread !== undefined
             ? ` (${bet.spread > 0 ? '+' : ''}${bet.spread})`
             : '';
-        const betTypeClass = bet.betType === 'spread' ? 'bet-type-spread' : 'bet-type-moneyline';
+
+        // Determine bet type class
+        let betTypeClass = 'bet-type-moneyline';
+        if (bet.betType === 'spread') betTypeClass = 'bet-type-spread';
+        if (bet.betType === 'total') betTypeClass = 'bet-type-total';
+
+        // Determine probability label
+        let probLabel = 'Win Prob';
+        if (bet.betType === 'spread') probLabel = 'Cover Prob';
+        if (bet.betType === 'total') probLabel = 'Hit Prob';
+
         return `
         <div class="bet-card ${bet.ev > 0.05 ? 'strong-edge' : ''}" onclick="showBetDetail(${idx})">
             <div class="bet-card-header">
@@ -261,7 +292,7 @@ function renderBets(bets) {
                 <span class="bet-pick-odds">${formatOdds(bet.odds)}</span>
             </div>
             <div class="bet-meta">
-                <span>${bet.betType === 'spread' ? 'Cover Prob' : 'Win Prob'}: ${(bet.modelProbability * 100).toFixed(0)}%</span>
+                <span>${probLabel}: ${(bet.modelProbability * 100).toFixed(0)}%</span>
                 <span class="bet-type-badge ${betTypeClass}">${bet.betType}</span>
             </div>
         </div>

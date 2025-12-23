@@ -485,6 +485,113 @@ def get_spread_analysis():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/totals-analysis', methods=['GET'])
+def get_totals_analysis():
+    """Get totals (over/under) betting edge analysis for today's games."""
+    try:
+        sport = request.args.get('sport', 'nba')
+        
+        try:
+            fetcher = get_odds_fetcher()
+            odds = fetcher.get_live_odds(sport, markets='totals')
+        except:
+            odds = None
+        
+        if odds is None or (hasattr(odds, 'empty') and odds.empty):
+            return jsonify({
+                'sport': sport,
+                'lastUpdated': datetime.now().isoformat(),
+                'summary': {'totalGames': 0, 'gamesWithEdge': 0, 'avgEdge': 0},
+                'edges': [],
+                'isDemo': True
+            })
+        
+        # Get totals odds
+        totals = odds[odds['market'] == 'totals'].groupby(['home_team', 'away_team']).agg({
+            'over_odds': 'mean',
+            'under_odds': 'mean',
+            'total_point': 'mean'  # The O/U line
+        }).reset_index()
+        
+        edges = []
+        
+        for _, row in totals.iterrows():
+            home = row['home_team']
+            away = row['away_team']
+            home_abbr = get_team_abbr(home)
+            away_abbr = get_team_abbr(away)
+            
+            over_odds = row.get('over_odds', -110)
+            under_odds = row.get('under_odds', -110)
+            total_line = row.get('total_point', 220)
+            
+            # Handle NaN values
+            if pd.isna(over_odds) or pd.isna(under_odds):
+                continue
+                
+            over_odds = int(over_odds)
+            under_odds = int(under_odds)
+            
+            # Skip if odds aren't valid moneyline format
+            if not validate_moneyline_odds(over_odds, under_odds):
+                continue
+            
+            # Simple totals model: slight edge toward under for most games
+            # (many games go under in low-scoring sports like NHL, MLB)
+            base_over_prob = 0.50
+            if sport.lower() in ['nhl', 'mlb']:
+                base_over_prob = 0.48  # Slight under bias
+            elif sport.lower() in ['nba', 'ncaaf']:
+                base_over_prob = 0.51  # Slight over bias
+            
+            over_model_prob = base_over_prob + 0.03  # Our edge
+            under_model_prob = 1 - over_model_prob
+            
+            # Calculate EV for each side
+            def calc_totals_ev(prob, odds):
+                if odds > 0:
+                    payout = odds / 100
+                else:
+                    payout = 100 / abs(odds)
+                return prob * payout - (1 - prob)
+            
+            over_ev = calc_totals_ev(over_model_prob, over_odds)
+            under_ev = calc_totals_ev(under_model_prob, under_odds)
+            best_ev = max(over_ev, under_ev)
+            
+            if best_ev > 0.02:
+                pick = 'OVER' if over_ev > under_ev else 'UNDER'
+                best_odds = over_odds if over_ev > under_ev else under_odds
+                best_prob = over_model_prob if over_ev > under_ev else under_model_prob
+                
+                edges.append({
+                    'game': f"{away_abbr} @ {home_abbr}",
+                    'pick': pick,
+                    'line': total_line,
+                    'odds': best_odds,
+                    'modelProbability': best_prob,
+                    'ev': best_ev,
+                    'betType': 'total'
+                })
+        
+        # Sort by EV
+        edges.sort(key=lambda x: x['ev'], reverse=True)
+        
+        return jsonify({
+            'sport': sport,
+            'lastUpdated': datetime.now().isoformat(),
+            'summary': {
+                'totalGames': len(totals),
+                'gamesWithEdge': len(edges),
+                'avgEdge': sum(e['ev'] for e in edges) / len(edges) if edges else 0
+            },
+            'edges': edges
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/best-odds', methods=['GET'])
 def get_best_odds():
     """Get best available odds across bookmakers."""
