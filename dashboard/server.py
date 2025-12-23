@@ -521,6 +521,74 @@ def get_performance():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/performance-history', methods=['GET'])
+def get_performance_history():
+    """Get daily P/L history for chart rendering."""
+    try:
+        from pathlib import Path
+        import pandas as pd
+        
+        csv_path = Path("./data")
+        csv_files = list(csv_path.glob("best_bets_*.csv"))
+        
+        if not csv_files:
+            # Return sample data for demo
+            return jsonify({
+                'history': [
+                    {'date': '2025-12-20', 'profit': 5.25, 'cumulative': 5.25, 'wins': 3, 'losses': 2},
+                    {'date': '2025-12-21', 'profit': -2.50, 'cumulative': 2.75, 'wins': 2, 'losses': 4},
+                    {'date': '2025-12-22', 'profit': 4.13, 'cumulative': 6.88, 'wins': 1, 'losses': 3}
+                ],
+                'isDemo': True
+            })
+        
+        # Load all CSVs
+        all_bets = pd.concat([pd.read_csv(f) for f in csv_files], ignore_index=True)
+        
+        # Filter to resolved bets only
+        resolved = all_bets[all_bets['result'].isin(['WIN', 'LOSS'])]
+        
+        if len(resolved) == 0:
+            return jsonify({'history': [], 'message': 'No resolved bets yet'})
+        
+        # Parse payout column (format: +7.13 or -1.00)
+        resolved = resolved.copy()
+        resolved['payout_value'] = resolved['payout'].apply(
+            lambda x: float(str(x).replace('+', '')) if pd.notna(x) and str(x).strip() else 0
+        )
+        
+        # Group by date
+        daily = resolved.groupby('date').agg({
+            'payout_value': 'sum',
+            'result': lambda x: {'wins': (x == 'WIN').sum(), 'losses': (x == 'LOSS').sum()}
+        }).reset_index()
+        
+        # Calculate cumulative P/L
+        history = []
+        cumulative = 0
+        
+        for _, row in daily.iterrows():
+            profit = row['payout_value']
+            cumulative += profit
+            stats = row['result']
+            history.append({
+                'date': row['date'],
+                'profit': round(profit, 2),
+                'cumulative': round(cumulative, 2),
+                'wins': stats['wins'],
+                'losses': stats['losses']
+            })
+        
+        return jsonify({
+            'history': history,
+            'totalProfit': round(cumulative, 2),
+            'totalBets': len(resolved)
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/injuries', methods=['GET'])
 def get_injuries():
     """Get current injury data."""

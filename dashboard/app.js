@@ -441,8 +441,104 @@ async function loadPerformance() {
         document.getElementById('roi-card').classList.toggle('positive', roi >= 0);
         document.getElementById('roi-card').classList.toggle('negative', roi < 0);
 
+        // Load performance history chart
+        loadPerformanceChart();
+
     } catch (error) {
         console.error('Failed to load performance:', error);
+    }
+}
+
+async function loadPerformanceChart() {
+    const ctx = document.getElementById('profit-chart');
+    if (!ctx) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/api/performance-history`);
+        const data = await response.json();
+
+        if (!data.history || data.history.length === 0) {
+            ctx.parentElement.innerHTML = '<div class="no-data">No performance history yet</div>';
+            return;
+        }
+
+        const history = data.history;
+
+        // Destroy previous chart if exists
+        if (window.performanceChart) {
+            window.performanceChart.destroy();
+        }
+
+        window.performanceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: history.map(h => h.date),
+                datasets: [
+                    {
+                        label: 'Cumulative P/L ($)',
+                        data: history.map(h => h.cumulative),
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    },
+                    {
+                        label: 'Daily P/L ($)',
+                        data: history.map(h => h.profit),
+                        borderColor: '#6366f1',
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#a0a8b8' }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: (context) => {
+                                const idx = context.dataIndex;
+                                const h = history[idx];
+                                return `Record: ${h.wins}W - ${h.losses}L`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#a0a8b8' },
+                        grid: { color: '#2d3748' }
+                    },
+                    y: {
+                        ticks: {
+                            color: '#a0a8b8',
+                            callback: value => '$' + value
+                        },
+                        grid: { color: '#2d3748' }
+                    }
+                }
+            }
+        });
+
+        // Show demo notice if applicable
+        if (data.isDemo) {
+            const notice = document.createElement('div');
+            notice.className = 'demo-notice';
+            notice.innerHTML = '<small>📊 Demo data - actual history will appear after bets resolve</small>';
+            ctx.parentElement.prepend(notice);
+        }
+
+    } catch (error) {
+        console.error('Failed to load performance chart:', error);
     }
 }
 
