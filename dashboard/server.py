@@ -5,11 +5,13 @@ Serves predictions, live odds, and edge analysis to the web dashboard.
 """
 
 from flask import Flask, jsonify, send_from_directory, request
+from flask.json.provider import DefaultJSONProvider
 from flask_cors import CORS
 from pathlib import Path
 from datetime import datetime
 import sys
 import numpy as np
+import json
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -26,7 +28,23 @@ sgo_module = importlib.util.module_from_spec(sgo_spec)
 sgo_spec.loader.exec_module(sgo_module)
 SGOFetcher = sgo_module.SGOFetcher
 
+
+# Custom JSON encoder to handle numpy types
+class NumpyJSONProvider(DefaultJSONProvider):
+    """Custom JSON provider that handles numpy types."""
+    
+    def default(self, obj):
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
 app = Flask(__name__, static_folder='.', static_url_path='')
+app.json = NumpyJSONProvider(app)  # Use custom JSON provider
 CORS(app)
 
 

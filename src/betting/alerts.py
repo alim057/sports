@@ -26,13 +26,13 @@ except ImportError:
 class AlertSystem:
     """Monitors API for betting edges and sends alerts."""
     
-    def __init__(self, check_interval_minutes: int = 5, min_ev: float = 0.05):
+    def __init__(self, check_interval_minutes: int = 5, min_ev: float = 0.07):
         """
         Initialize alert system.
         
         Args:
             check_interval_minutes: How often to check (default 5 mins)
-            min_ev: Minimum EV to trigger alert (default 5%)
+            min_ev: Minimum EV to trigger alert (default 7%)
         """
         self.interval = check_interval_minutes * 60
         self.min_ev = min_ev
