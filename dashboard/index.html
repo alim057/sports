@@ -22,6 +22,7 @@
                     <button class="nav-btn active" data-tab="predictions">🔥 Best Bets</button>
                     <button class="nav-btn" data-tab="evaluator">Bet Evaluator</button>
                     <button class="nav-btn" data-tab="edge">Edge Analysis</button>
+                    <button class="nav-btn" data-tab="player-props">Player Props</button>
                     <button class="nav-btn" data-tab="performance">Performance</button>
                 </nav>
             </div>
@@ -33,6 +34,11 @@
             <section id="predictions" class="tab-content active">
                 <div class="section-header">
                     <h2>🔥 Best Bets Today</h2>
+                </div>
+
+                <!-- Model Info Cards -->
+                <div class="model-info-section" id="model-info-container">
+                    <!-- Cards loaded via JS -->
                 </div>
 
                 <!-- Filters Bar -->
@@ -220,6 +226,35 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </section>
+
+            <!-- Player Props Tab -->
+            <section id="player-props" class="tab-content">
+                <div class="section-header">
+                    <h2>🎯 Player Props</h2>
+                    <div class="last-updated">Live updates from SGO</div>
+                </div>
+
+                <div class="filters-bar">
+                    <div class="filter-group">
+                        <label>Sport</label>
+                        <select id="props-sport-filter" onchange="loadPlayerProps()">
+                            <option value="nba">🏀 NBA</option>
+                            <option value="nfl">🏈 NFL</option>
+                            <option value="mlb">⚾ MLB</option>
+                            <option value="nhl">🏒 NHL</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Search Player</label>
+                        <input type="text" id="props-player-search" placeholder="e.g. LeBron" onkeyup="filterProps()">
+                    </div>
+                </div>
+
+                <div id="props-container" class="cards-grid">
+                    <!-- Props loaded via JS -->
+                    <div class="loading-spinner"></div>
                 </div>
             </section>
 

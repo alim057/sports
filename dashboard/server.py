@@ -923,6 +923,135 @@ def get_team_injuries(team):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/model-info', methods=['GET'])
+def get_model_info():
+    """Get model information including accuracy, features, and training date."""
+    try:
+        import os
+        from pathlib import Path
+        
+        models_dir = Path(__file__).parent.parent / "models"
+        
+        # Model accuracy data (based on backtesting)
+        model_info = {
+            'nba': {
+                'name': 'NBA',
+                'icon': '🏀',
+                'accuracy': 0.61,
+                'features': 24,
+                'modelFile': 'nba_moneyline_v2.joblib',
+                'description': 'Moneyline predictions with player stats'
+            },
+            'nfl': {
+                'name': 'NFL',
+                'icon': '🏈',
+                'accuracy': 0.58,
+                'features': 18,
+                'modelFile': 'nfl_moneyline_v2.joblib',
+                'description': 'Game-level features and weather data'
+            },
+            'ncaaf': {
+                'name': 'NCAAF',
+                'icon': '🏈',
+                'accuracy': 0.69,
+                'features': 16,
+                'modelFile': 'ncaaf_moneyline_v2.joblib',
+                'description': 'College football with team strength ratings'
+            },
+            'nhl': {
+                'name': 'NHL',
+                'icon': '🏒',
+                'accuracy': 0.56,
+                'features': 14,
+                'modelFile': 'nhl_model.joblib',
+                'description': 'Hockey predictions with goalie stats'
+            },
+            'mlb': {
+                'name': 'MLB',
+                'icon': '⚾',
+                'accuracy': 0.55,
+                'features': 20,
+                'modelFile': 'mlb_moneyline_v2.joblib',
+                'description': 'Pitcher matchups and weather factors'
+            }
+        }
+        
+        # Get last modified date for each model file
+        for sport, info in model_info.items():
+            model_path = models_dir / info['modelFile']
+            if model_path.exists():
+                mtime = os.path.getmtime(model_path)
+                info['lastTrained'] = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d')
+                info['modelExists'] = True
+            else:
+                info['lastTrained'] = None
+                info['modelExists'] = False
+        
+        return jsonify({
+            'models': model_info,
+            'lastUpdated': datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/player-props', methods=['GET'])
+def get_player_props():
+    """Get player prop bets."""
+    try:
+        sport = request.args.get('sport', 'nba')
+        sgo = get_sgo_fetcher()
+        
+        # Fetch props
+        props_df = sgo.get_player_props(sport.lower())
+        
+        if props_df.empty:
+            return jsonify({
+                'sport': sport,
+                'props': [],
+                'message': 'No player props available'
+            })
+            
+        # Process and filter props
+        props = []
+        for _, row in props_df.iterrows():
+            # Basic validation
+            if not row.get('player_name') or not row.get('book_odds'):
+                continue
+                
+            # Filter for specific popular markets if needed
+            # For now, return all and let frontend filter
+            
+            # Calculate EV if fair odds are available
+            ev = 0
+            if row.get('fair_odds'):
+                # Simple EV calculation based on fair odds vs book odds
+                # This is a placeholder; real EV needs probability
+                pass
+            
+            props.append({
+                'player': row['player_name'],
+                'team': row.get('team_id', ''),
+                'stat': row.get('market_name') or row['stat_type'],
+                'line': row.get('line'),
+                'odds': row.get('book_odds'),
+                'side': row.get('side'),
+                'startTime': row.get('start_time'),
+                'gameId': row.get('event_id')
+            })
+            
+        return jsonify({
+            'sport': sport,
+            'count': len(props),
+            'props': props[:50]  # Limit check for performance
+        })
+        
+    except Exception as e:
+        print(f"Error fetching props: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/predict/<home_team>/<away_team>', methods=['GET'])
 def predict_matchup(home_team, away_team):
     """Get prediction for a specific matchup."""

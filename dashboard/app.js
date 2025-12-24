@@ -132,6 +132,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
         if (tabId === 'predictions') loadPredictions();
         if (tabId === 'edge') loadEdgeAnalysis();
         if (tabId === 'performance') loadPerformance();
+        if (tabId === 'player-props') loadPlayerProps();
     });
 });
 
@@ -140,22 +141,92 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 // Store all bets for filtering
 let allBets = [];
 let demoSports = new Set(); // Track which sports are showing demo data
+let failedEndpoints = []; // Track failed API calls for retry
+
+// Generate skeleton cards HTML
+function getSkeletonCardsHtml(count = 6) {
+    const skeletonCard = `
+        <div class="skeleton-card">
+            <div class="skeleton-header">
+                <div class="skeleton skeleton-badge"></div>
+                <div class="skeleton skeleton-ev"></div>
+            </div>
+            <div class="skeleton skeleton-matchup"></div>
+            <div class="skeleton skeleton-time"></div>
+            <div class="skeleton skeleton-pick"></div>
+            <div class="skeleton-meta">
+                <div class="skeleton skeleton-prob"></div>
+                <div class="skeleton skeleton-type"></div>
+            </div>
+        </div>
+    `;
+    return skeletonCard.repeat(count);
+}
+
+// Show connection status
+function showConnectionStatus(message, status = 'connecting') {
+    const container = document.getElementById('bets-container');
+    container.innerHTML = `
+        <div class="connection-status ${status}">
+            <div class="status-icon"></div>
+            <span>${message}</span>
+        </div>
+        ${getSkeletonCardsHtml(6)}
+    `;
+}
+
+// Show error state with retry button
+function showErrorState(message, retryFn) {
+    const container = document.getElementById('bets-container');
+    container.innerHTML = `
+        <div class="error-state">
+            <div class="error-icon">⚠️</div>
+            <div class="error-title">Failed to Load Bets</div>
+            <div class="error-message">${message}</div>
+            <button class="btn-retry" onclick="retryLoadBets()">
+                <span class="retry-icon">↻</span> Try Again
+            </button>
+        </div>
+    `;
+}
+
+// Show empty state
+function showEmptyState() {
+    const container = document.getElementById('bets-container');
+    container.innerHTML = `
+        <div class="empty-state">
+            <div class="empty-icon">🎯</div>
+            <div class="empty-title">No Bets Available</div>
+            <div class="empty-message">No edges found matching your filters. Try adjusting your filters or check back later for new opportunities.</div>
+        </div>
+    `;
+}
+
+// Retry function for failed loads
+function retryLoadBets() {
+    loadAllBets();
+}
 
 async function loadAllBets() {
     const container = document.getElementById('bets-container');
-    container.innerHTML = '<div class="loading"></div>';
+    showConnectionStatus('Connecting to SGO...', 'connecting');
 
     const sports = ['nba', 'nfl', 'nhl', 'ncaaf'];
     allBets = [];
     demoSports.clear();
+    failedEndpoints = [];
 
     let sgoGamesTotal = 0;
+    let hasAnyData = false;
+    let totalErrors = 0;
 
     // Fetch moneyline edges
     for (const sport of sports) {
         try {
             const response = await fetch(`${API_BASE}/api/edge-analysis?sport=${sport}`);
             const data = await response.json();
+
+            hasAnyData = true;
 
             // Track if this sport is showing demo data
             if (data.isDemo) {
@@ -180,6 +251,8 @@ async function loadAllBets() {
             }
         } catch (e) {
             console.log(`${sport} moneyline error:`, e);
+            failedEndpoints.push({ type: 'moneyline', sport });
+            totalErrors++;
         }
     }
 
@@ -188,6 +261,8 @@ async function loadAllBets() {
         try {
             const response = await fetch(`${API_BASE}/api/spread-analysis?sport=${sport}`);
             const data = await response.json();
+
+            hasAnyData = true;
 
             if (data.isDemo) {
                 demoSports.add(sport.toUpperCase());
@@ -205,6 +280,8 @@ async function loadAllBets() {
             }
         } catch (e) {
             console.log(`${sport} spread error:`, e);
+            failedEndpoints.push({ type: 'spread', sport });
+            totalErrors++;
         }
     }
 
@@ -213,6 +290,8 @@ async function loadAllBets() {
         try {
             const response = await fetch(`${API_BASE}/api/totals-analysis?sport=${sport}`);
             const data = await response.json();
+
+            hasAnyData = true;
 
             if (data.isDemo) {
                 demoSports.add(sport.toUpperCase());
@@ -231,7 +310,15 @@ async function loadAllBets() {
             }
         } catch (e) {
             console.log(`${sport} totals error:`, e);
+            failedEndpoints.push({ type: 'totals', sport });
+            totalErrors++;
         }
+    }
+
+    // Check for complete failure (no data at all)
+    if (!hasAnyData && totalErrors > 0) {
+        showErrorState('Unable to connect to the betting API. Please check your connection and try again.');
+        return;
     }
 
     // Sort by EV descending
@@ -293,15 +380,19 @@ function applyFilters() {
     const uniqueSports = new Set(filtered.map(b => b.sport));
     document.getElementById('total-sports').textContent = uniqueSports.size;
 
-    // Show SGO live data indicator if we have SGO data
+    // Show SGO live data indicator with new styled component
     const sgoDataCount = allBets.filter(b => b.source === 'SGO').length;
     const dataSourceBadge = document.getElementById('data-source-badge');
     if (dataSourceBadge) {
-        if (sgoDataCount > 0 && demoSports.size === 0) {
+        if (sgoDataCount > 0) {
+            // Use new styled SGO indicator
             dataSourceBadge.style.display = 'flex';
-            document.getElementById('data-source-label').textContent = 'SGO Live';
-        } else if (demoSports.size > 0) {
-            dataSourceBadge.style.display = 'none';
+            dataSourceBadge.innerHTML = `
+                <span class="sgo-indicator">
+                    <span class="sgo-dot"></span>
+                    SGO Live
+                </span>
+            `;
         } else {
             dataSourceBadge.style.display = 'none';
         }
@@ -335,7 +426,7 @@ function renderBets(bets) {
     const container = document.getElementById('bets-container');
 
     if (bets.length === 0) {
-        container.innerHTML = '<div class="no-data">No bets match your filters</div>';
+        showEmptyState();
         return;
     }
 
@@ -455,13 +546,62 @@ function closeModal(event) {
     document.getElementById('bet-modal').classList.remove('active');
 }
 
+// Load model info cards
+async function loadModelInfo() {
+    const container = document.getElementById('model-info-container');
+    if (!container) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/api/model-info`);
+        const data = await response.json();
+
+        if (!data.models) return;
+
+        const sports = ['nba', 'nfl', 'ncaaf', 'nhl', 'mlb'];
+
+        container.innerHTML = sports.map(sport => {
+            const info = data.models[sport];
+            if (!info) return '';
+
+            return `
+                <div class="model-card">
+                    <div class="model-header">
+                        <div class="model-name">
+                            <span>${info.icon}</span>
+                            <span>${info.name}</span>
+                        </div>
+                        <div class="model-accuracy">${(info.accuracy * 100).toFixed(0)}%</div>
+                    </div>
+                    
+                    <div>
+                        <div class="accuracy-label">Accuracy</div>
+                        <div class="accuracy-bar-bg">
+                            <div class="accuracy-bar-fill" style="width: ${info.accuracy * 100}%"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="model-meta">
+                        <span>${info.features} Features</span>
+                        <span>Updated: ${info.lastTrained || 'N/A'}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (e) {
+        console.error('Failed to load model info:', e);
+    }
+}
+
 function refreshAllBets() {
     loadAllBets();
+    loadModelInfo(); // Refresh model info too
 }
 
 // Legacy support
 async function loadPredictions() {
     loadAllBets();
+    loadModelInfo();
 }
 
 async function loadEdgeAnalysis() {
@@ -955,3 +1095,75 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 5 * 60 * 1000);
 });
 
+
+// Player Props Loading
+async function loadPlayerProps() {
+    const container = document.getElementById('props-container');
+    const sport = document.getElementById('props-sport-filter').value;
+
+    if (!container) return;
+
+    // Show loading skeleton/spinner
+    container.innerHTML = '<div class="loading-spinner"></div>';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/player-props?sport=${sport}`);
+        const data = await response.json();
+
+        if (!data.props || data.props.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">🤷‍♂️</div>
+                    <div class="empty-title">No Player Props Found</div>
+                    <div class="empty-message">No props available for ${sport.toUpperCase()} right now. Live viewing requires active games.</div>
+                </div>
+            `;
+            return;
+        }
+
+        renderPlayerProps(data.props);
+
+    } catch (e) {
+        console.error('Error loading props:', e);
+        container.innerHTML = '<div class="error-message">Failed to load player props. Please try again.</div>';
+    }
+}
+
+function renderPlayerProps(props) {
+    const container = document.getElementById('props-container');
+    if (!container) return;
+
+    container.innerHTML = props.map(prop => `
+        <div class="prop-card">
+            <div class="prop-header">
+                <span class="prop-player-name">${prop.player}</span>
+                <span class="prop-team">${prop.team}</span>
+            </div>
+            <div class="prop-market">
+                <span class="prop-stat">${prop.stat}</span>
+            </div>
+            <div class="prop-odds-row">
+                <div class="prop-line">
+                    <span class="line-label">${prop.side} ${prop.line}</span>
+                    <span class="line-odds">${formatOdds(prop.odds)}</span>
+                </div>
+                <button class="btn-bet-sm">Analyze</button>
+            </div>
+            <div class="prop-time">${formatGameTime(prop.startTime)}</div>
+        </div>
+    `).join('');
+}
+
+function filterProps() {
+    const search = document.getElementById('props-player-search').value.toLowerCase();
+    const cards = document.querySelectorAll('.prop-card');
+
+    cards.forEach(card => {
+        const name = card.querySelector('.prop-player-name').textContent.toLowerCase();
+        if (name.includes(search)) {
+            card.style.display = 'flex';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
