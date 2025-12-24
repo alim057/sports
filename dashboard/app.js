@@ -149,6 +149,8 @@ async function loadAllBets() {
     allBets = [];
     demoSports.clear();
 
+    let sgoGamesTotal = 0;
+
     // Fetch moneyline edges
     for (const sport of sports) {
         try {
@@ -160,13 +162,19 @@ async function loadAllBets() {
                 demoSports.add(sport.toUpperCase());
             }
 
+            // Track SGO source
+            if (data.source === 'SGO') {
+                sgoGamesTotal += data.summary?.totalGames || 0;
+            }
+
             if (data.edges) {
                 data.edges.forEach(edge => {
                     allBets.push({
                         ...edge,
                         sport: sport.toUpperCase(),
                         betType: 'moneyline',
-                        isDemo: data.isDemo || false
+                        isDemo: data.isDemo || false,
+                        source: data.source || 'legacy'
                     });
                 });
             }
@@ -284,6 +292,20 @@ function applyFilters() {
     document.getElementById('avg-ev').textContent = `+${(avgEv * 100).toFixed(1)}%`;
     const uniqueSports = new Set(filtered.map(b => b.sport));
     document.getElementById('total-sports').textContent = uniqueSports.size;
+
+    // Show SGO live data indicator if we have SGO data
+    const sgoDataCount = allBets.filter(b => b.source === 'SGO').length;
+    const dataSourceBadge = document.getElementById('data-source-badge');
+    if (dataSourceBadge) {
+        if (sgoDataCount > 0 && demoSports.size === 0) {
+            dataSourceBadge.style.display = 'flex';
+            document.getElementById('data-source-label').textContent = 'SGO Live';
+        } else if (demoSports.size > 0) {
+            dataSourceBadge.style.display = 'none';
+        } else {
+            dataSourceBadge.style.display = 'none';
+        }
+    }
 
     // Render the bets and demo warning if applicable
     const container = document.getElementById('bets-container');
