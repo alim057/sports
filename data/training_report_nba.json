@@ -1,0 +1,34 @@
+{
+  "sport": "NBA",
+  "games_total": 1651,
+  "seasons": [
+    "2024-25",
+    "2025-26"
+  ],
+  "features": [
+    "home_pts",
+    "away_pts",
+    "home_won",
+    "home_fg_pct",
+    "away_fg_pct",
+    "home_reb",
+    "away_reb",
+    "home_ast",
+    "away_ast",
+    "home_tov",
+    "away_tov",
+    "home_pts_l10",
+    "home_opp_pts_l10",
+    "home_fg_pct_l10",
+    "home_reb_l10",
+    "home_ast_l10",
+    "home_win_l10",
+    "away_pts_l10",
+    "away_opp_pts_l10",
+    "away_fg_pct_l10",
+    "away_reb_l10",
+    "away_ast_l10",
+    "away_win_l10"
+  ],
+  "home_win_rate": 0.5475469412477286
+}

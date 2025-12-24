@@ -1,0 +1,15 @@
+{
+  "sport": "MLB",
+  "games_total": 2408,
+  "seasons": [
+    "2025"
+  ],
+  "features": [
+    "home_pts",
+    "away_pts",
+    "home_won",
+    "home_runs_l10",
+    "away_runs_l10"
+  ],
+  "home_win_rate": 0.5419435215946844
+}

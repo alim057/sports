@@ -1,0 +1,18 @@
+{
+  "sport": "NCAAF",
+  "games_total": 1760,
+  "seasons": [
+    "2024",
+    "2025"
+  ],
+  "features": [
+    "home_pts",
+    "away_pts",
+    "home_won",
+    "home_pts_l5",
+    "home_margin_l5",
+    "away_pts_l5",
+    "away_margin_l5"
+  ],
+  "home_win_rate": 0.6414772727272727
+}
