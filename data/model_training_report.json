@@ -1,0 +1,134 @@
+{
+  "generated_at": "2025-12-23T16:20:06.684908",
+  "models": {
+    "nba": {
+      "sport": "NBA",
+      "games_trained": 1651,
+      "features_used": [
+        "home_pts_l10",
+        "away_pts_l10",
+        "home_opp_pts_l10",
+        "away_opp_pts_l10",
+        "home_fg_pct_l10",
+        "away_fg_pct_l10",
+        "home_reb_l10",
+        "away_reb_l10",
+        "home_ast_l10",
+        "away_ast_l10",
+        "home_win_l10",
+        "away_win_l10",
+        "home_injury_impact",
+        "away_injury_impact",
+        "injury_advantage"
+      ],
+      "test_accuracy": 0.5619,
+      "cv_mean": 0.6136,
+      "cv_std": 0.0233,
+      "feature_importance": {
+        "away_win_l10": 0.2183789312839508,
+        "home_win_l10": 0.10999728739261627,
+        "home_pts_l10": 0.07300639152526855,
+        "injury_advantage": 0.07261569052934647,
+        "away_pts_l10": 0.07092062383890152,
+        "home_opp_pts_l10": 0.0704907774925232,
+        "away_fg_pct_l10": 0.06451208144426346,
+        "home_fg_pct_l10": 0.06354495882987976,
+        "away_opp_pts_l10": 0.06128009781241417,
+        "away_reb_l10": 0.05315302684903145,
+        "home_reb_l10": 0.04901573061943054,
+        "home_ast_l10": 0.04666082561016083,
+        "away_ast_l10": 0.046423546969890594,
+        "home_injury_impact": 0.0,
+        "away_injury_impact": 0.0
+      },
+      "model_path": "C:\\Users\\alima\\Desktop\\Antigravity_playground\\sports-betting-predictor\\models\\nba_moneyline_v2.joblib"
+    },
+    "nfl": {
+      "sport": "NFL",
+      "games_trained": 512,
+      "features_used": [
+        "home_pts_l5",
+        "away_pts_l5",
+        "home_opp_pts_l5",
+        "away_opp_pts_l5",
+        "is_dome",
+        "temp_f",
+        "wind_mph",
+        "is_cold",
+        "is_windy"
+      ],
+      "test_accuracy": 0.5631,
+      "cv_mean": 0.5626,
+      "cv_std": 0.0494,
+      "feature_importance": {
+        "home_pts_l5": 0.1925392597913742,
+        "away_pts_l5": 0.16675695776939392,
+        "wind_mph": 0.15168675780296326,
+        "temp_f": 0.1509528011083603,
+        "home_opp_pts_l5": 0.1345105916261673,
+        "away_opp_pts_l5": 0.10283517092466354,
+        "is_dome": 0.1007184088230133,
+        "is_cold": 0.0,
+        "is_windy": 0.0
+      },
+      "model_path": "C:\\Users\\alima\\Desktop\\Antigravity_playground\\sports-betting-predictor\\models\\nfl_moneyline_v2.joblib"
+    },
+    "ncaaf": {
+      "sport": "NCAAF",
+      "games_trained": 1760,
+      "features_used": [
+        "home_pts_l5",
+        "away_pts_l5",
+        "home_margin_l5",
+        "away_margin_l5",
+        "home_strength",
+        "away_strength",
+        "strength_diff",
+        "temp_f",
+        "wind_mph"
+      ],
+      "test_accuracy": 0.696,
+      "cv_mean": 0.6915,
+      "cv_std": 0.022,
+      "feature_importance": {
+        "strength_diff": 0.31289827823638916,
+        "temp_f": 0.1274094581604004,
+        "away_pts_l5": 0.12734241783618927,
+        "away_margin_l5": 0.12261928617954254,
+        "home_margin_l5": 0.11083199083805084,
+        "wind_mph": 0.10410509258508682,
+        "home_pts_l5": 0.09479353576898575,
+        "home_strength": 0.0,
+        "away_strength": 0.0
+      },
+      "model_path": "C:\\Users\\alima\\Desktop\\Antigravity_playground\\sports-betting-predictor\\models\\ncaaf_moneyline_v2.joblib"
+    },
+    "mlb": {
+      "sport": "MLB",
+      "games_trained": 2408,
+      "features_used": [
+        "home_runs_l10",
+        "away_runs_l10",
+        "home_team_era",
+        "away_team_era",
+        "era_advantage"
+      ],
+      "test_accuracy": 0.5539,
+      "cv_mean": 0.5054,
+      "cv_std": 0.0206,
+      "feature_importance": {
+        "away_runs_l10": 0.2131233513355255,
+        "home_runs_l10": 0.20806147158145905,
+        "away_team_era": 0.1974729299545288,
+        "era_advantage": 0.19300824403762817,
+        "home_team_era": 0.1883339285850525
+      },
+      "model_path": "C:\\Users\\alima\\Desktop\\Antigravity_playground\\sports-betting-predictor\\models\\mlb_moneyline_v2.joblib"
+    }
+  },
+  "summary": {
+    "total_sports": 4,
+    "successful": 4,
+    "avg_accuracy": 0.593725
+  }
+}

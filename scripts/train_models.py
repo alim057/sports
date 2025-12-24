@@ -32,17 +32,26 @@ class MultiSportTrainer:
             'home_reb_l10', 'away_reb_l10',
             'home_ast_l10', 'away_ast_l10',
             'home_win_l10', 'away_win_l10',
+            # Enhanced features
+            'home_injury_impact', 'away_injury_impact', 'injury_advantage',
         ],
         'nfl': [
             'home_pts_l5', 'away_pts_l5',
             'home_opp_pts_l5', 'away_opp_pts_l5',
+            # Enhanced weather features
+            'is_dome', 'temp_f', 'wind_mph', 'is_cold', 'is_windy',
         ],
         'ncaaf': [
             'home_pts_l5', 'away_pts_l5',
             'home_margin_l5', 'away_margin_l5',
+            # Enhanced features
+            'home_strength', 'away_strength', 'strength_diff',
+            'temp_f', 'wind_mph',
         ],
         'mlb': [
             'home_runs_l10', 'away_runs_l10',
+            # Enhanced pitching features
+            'home_team_era', 'away_team_era', 'era_advantage',
         ]
     }
     
@@ -53,10 +62,18 @@ class MultiSportTrainer:
         
     def load_training_data(self, sport: str) -> pd.DataFrame:
         """Load training data for a sport."""
-        path = self.data_dir / f"{sport}_training_data.csv"
+        # Try enhanced data first
+        enhanced_path = self.data_dir / f"{sport}_training_enhanced.csv"
+        regular_path = self.data_dir / f"{sport}_training_data.csv"
         
-        if not path.exists():
-            print(f"Error: Training data not found at {path}")
+        if enhanced_path.exists():
+            path = enhanced_path
+            print(f"Using ENHANCED data for {sport.upper()}")
+        elif regular_path.exists():
+            path = regular_path
+            print(f"Using regular data for {sport.upper()}")
+        else:
+            print(f"Error: Training data not found for {sport}")
             return pd.DataFrame()
             
         df = pd.read_csv(path)
