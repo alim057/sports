@@ -332,13 +332,44 @@ def get_edge_analysis():
         # Try SGO API first (primary source)
         try:
             sgo = get_sgo_fetcher()
-            games_df = sgo.get_upcoming_games(sport.lower())
-            if not games_df.empty:
-                # Use SGO data
+            
+            # Use get_best_odds to get the best lines + bookmaker info
+            # This returns a DataFrame with columns: event_id, home_team, away_team, start_time, book_odds, bookmaker, side, etc.
+            best_odds_df = sgo.get_best_odds(sport.lower(), market='ml')
+            
+            if not best_odds_df.empty:
+                # We need to process this DataFrame to reconstruct games with home/away sides
+                # Group by event_id to merge home/away sides
+                games = {}
+                for idx, row in best_odds_df.iterrows():
+                    event_id = row['event_id']
+                    side = row['side']
+                    
+                    if event_id not in games:
+                        games[event_id] = {
+                            'home_team': row['home_team'],
+                            'away_team': row['away_team'],
+                            'start_time': row['start_time'],
+                            'home_odds': None,
+                            'away_odds': None,
+                            'home_book': None,
+                            'away_book': None
+                        }
+                    
+                    if side == 'home':
+                        games[event_id]['home_odds'] = row['book_odds']
+                        games[event_id]['home_book'] = row['bookmaker']
+                    elif side == 'away':
+                        games[event_id]['away_odds'] = row['book_odds']
+                        games[event_id]['away_book'] = row['bookmaker']
+
                 edges = []
-                for _, row in games_df.iterrows():
-                    home_odds_str = row.get('moneyline_home', '-110')
-                    away_odds_str = row.get('moneyline_away', '+100')
+                for event_id, game in games.items():
+                    home_odds_str = game.get('home_odds')
+                    away_odds_str = game.get('away_odds')
+                    
+                    if not home_odds_str or not away_odds_str:
+                        continue
                     
                     # Parse odds
                     try:
@@ -363,31 +394,47 @@ def get_edge_analysis():
                     home_impl = implied_prob(home_odds)
                     away_impl = implied_prob(away_odds)
                     
-                    # Use implied prob + small edge as model prob (2% edge)
-                    home_model_prob = min(0.95, home_impl + 0.02)
-                    away_model_prob = 1 - home_model_prob
+                    # FIXED: Use implied as model prob (conservative - no fake edge)
+                    # Only proceed if odds show potential value (underdog scenarios)
+                    home_model_prob = home_impl
+                    away_model_prob = away_impl
                     
                     home_ev = calc_ev(home_model_prob, home_odds)
                     away_ev = calc_ev(away_model_prob, away_odds)
                     best_ev = max(home_ev, away_ev)
                     
-                    # Require 7% EV minimum and 35-65% probability range
+                    # STRICTER FILTERS:
+                    # 1. Require 10% EV minimum (was 7%)
+                    # 2. Only bet on strong favorites (prob > 55%) OR value underdogs with good lines
+                    # 3. Skip extreme underdogs (odds > +500) to avoid low-prob traps
                     best_prob = home_model_prob if home_ev > away_ev else away_model_prob
-                    if best_ev < 0.07 or not (0.35 <= best_prob <= 0.65):
+                    best_odds_val = home_odds if home_ev > away_ev else away_odds
+                    
+                    # Skip if EV too low or extreme underdog
+                    if best_ev < 0.10:
+                        continue
+                    if best_odds_val > 500:  # Skip huge underdogs
+                        continue
+                    if not (0.40 <= best_prob <= 0.70):  # Tighter probability range
                         continue
                     
-                    home_team = row.get('home_team', '').upper()[:3]
-                    away_team = row.get('away_team', '').upper()[:3]
-                    best_team = home_team if home_ev > away_ev else away_team
-                    best_odds = home_odds if home_ev > away_ev else away_odds
+                    home_team = game.get('home_team', '').upper()[:3]
+                    away_team = game.get('away_team', '').upper()[:3]
+                    
+                    is_home_best = home_ev > away_ev
+                    best_team = home_team if is_home_best else away_team
+                    best_odds = home_odds if is_home_best else away_odds
+                    best_book = game.get('home_book') if is_home_best else game.get('away_book')
                     
                     edges.append({
+                        'gameId': event_id,
                         'game': f"{away_team} @ {home_team}",
                         'team': best_team,
                         'odds': best_odds,
+                        'bookmaker': best_book,
                         'modelProbability': best_prob,
                         'ev': best_ev,
-                        'startTime': row.get('start_time')
+                        'startTime': game.get('start_time')
                     })
                 
                 edges.sort(key=lambda x: x['ev'], reverse=True)
@@ -396,16 +443,18 @@ def get_edge_analysis():
                     'sport': sport.upper(),
                     'lastUpdated': datetime.now().isoformat(),
                     'summary': {
-                        'totalGames': len(games_df),
+                        'totalGames': len(games),
                         'gamesWithEdge': len(edges),
                         'avgEdge': sum(e['ev'] for e in edges) / len(edges) if edges else 0
                     },
                     'edges': edges,
-                    'isDemo': False,
-                    'source': 'SGO'
+                    'source': 'SGO',
+                    'isDemo': False
                 })
         except Exception as sgo_err:
             print(f"SGO fetch error: {sgo_err}")
+
+
         
         # Fallback to legacy odds API
         try:
@@ -527,6 +576,55 @@ def get_edge_analysis():
         })
 
     
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+@app.route('/api/odds-comparison/<event_id>', methods=['GET'])
+def get_odds_comparison(event_id):
+    """Get odds comparison for a specific game."""
+    try:
+        sgo = get_sgo_fetcher()
+        odds_df = sgo.get_all_bookmaker_odds(event_id)
+        
+        if odds_df.empty:
+            return jsonify({
+                'eventId': event_id,
+                'bookmakers': [],
+                'message': 'No odds available'
+            })
+            
+        # Process odds into cleaner format
+        bookmakers = []
+        
+        # Group by bookmaker
+        by_book = odds_df.groupby('bookmaker')
+        
+        for book_name, group in by_book:
+            # Get home and away odds for this book
+            home_row = group[group['side'] == 'home']
+            away_row = group[group['side'] == 'away']
+            
+            if home_row.empty or away_row.empty:
+                continue
+                
+            home_odds = home_row.iloc[0]['book_odds']
+            away_odds = away_row.iloc[0]['book_odds']
+            
+            bookmakers.append({
+                'name': book_name,
+                'homeOdds': home_odds,
+                'awayOdds': away_odds,
+                'lastUpdated': home_row.iloc[0]['fetched_at']
+            })
+            
+        return jsonify({
+            'eventId': event_id,
+            'game': f"{odds_df.iloc[0]['away_team']} @ {odds_df.iloc[0]['home_team']}",
+            'bookmakers': bookmakers
+        })
+        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -800,6 +898,35 @@ def get_performance():
         total_profit = perf.get('total_profit', 0)
         current_bankroll = STARTING_BANKROLL + total_profit
         
+        # Calculate Streak
+        streak_label = "0"
+        try:
+            history = tracker.get_bet_history(status='resolved', limit=20)
+            if not history.empty:
+                current_result = None
+                streak_count = 0
+                
+                # Sort by resolved_at descending to check most recent
+                if 'resolved_at' in history.columns:
+                    history = history.sort_values('resolved_at', ascending=False)
+                
+                for _, row in history.iterrows():
+                    res = row['result']
+                    if res not in ['win', 'loss']: continue
+                    
+                    if current_result is None:
+                        current_result = res
+                        streak_count = 1
+                    elif res == current_result:
+                        streak_count += 1
+                    else:
+                        break
+                
+                if streak_count > 0:
+                    streak_label = f"{streak_count}{'W' if current_result == 'win' else 'L'}"
+        except Exception as e:
+            print(f"Error calculating streak: {e}")
+
         response = {
             'total_bets': perf.get('total_bets', 0),
             'wins': perf.get('wins', 0),
@@ -811,6 +938,7 @@ def get_performance():
             'roi': perf.get('roi', 0),
             'starting_bankroll': STARTING_BANKROLL,
             'current_bankroll': round(current_bankroll, 2),
+            'streak': streak_label,
             'isDemo': False
         }
         
