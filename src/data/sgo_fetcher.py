@@ -81,7 +81,7 @@ class SGOFetcher:
         self._last_request_time = time.time()
         self._request_count += 1
     
-    def _make_request(self, endpoint: str, params: Dict = None) -> Dict:
+    def _make_request(self, endpoint: str, params: Dict = None, _retry_count: int = 0) -> Dict:
         """
         Make a request to the SGO API.
         
@@ -106,9 +106,11 @@ class SGOFetcher:
             return response.json()
         except requests.exceptions.HTTPError as e:
             if response.status_code == 429:
-                print(f"[SGO] Rate limit hit. Waiting 60 seconds...")
+                if _retry_count >= 3:
+                    raise Exception("SGO API rate limit exceeded after 3 retries")
+                print(f"[SGO] Rate limit hit. Waiting 60 seconds... (retry {_retry_count + 1}/3)")
                 time.sleep(60)
-                return self._make_request(endpoint, params)
+                return self._make_request(endpoint, params, _retry_count + 1)
             raise Exception(f"SGO API error: {e}")
         except requests.exceptions.RequestException as e:
             raise Exception(f"SGO API request failed: {e}")
@@ -304,9 +306,48 @@ class SGOFetcher:
         odds_df["odds_numeric"] = odds_df["book_odds"].apply(parse_odds)
         
         # Group by event and side, get best odds
-        best_odds = odds_df.loc[odds_df.groupby(["event_id", "side"])["odds_numeric"].idxmax()]
+        # We need to keep the bookmaker column
+        idx = odds_df.groupby(["event_id", "side"])["odds_numeric"].idxmax()
+        best_odds = odds_df.loc[idx]
         
         return best_odds
+    
+    def get_all_bookmaker_odds(self, event_id: str) -> pd.DataFrame:
+        """
+        Get odds from all bookmakers for a specific event.
+        
+        Args:
+            event_id: Event ID
+            
+        Returns:
+            DataFrame with odds from all bookmakers
+        """
+        # We can't fetch just one event easily with current setup, 
+        # so we'll fetch the league events and filter.
+        # This is a bit inefficient but works for now. 
+        # A better way would be to cache the last fetch.
+        
+        # Inspect event_id to guess league (not perfect but SGO IDs usually don't have league info)
+        # We'll try to find it in our current cache if we had one, 
+        # strictly speaking we need the league. 
+        # For now, we'll search top leagues.
+        
+        # Optimization: Try to find the event in recent sports
+        found_odds = []
+        
+        for league in ["nba", "nfl", "ncaaf", "mlb", "nhl"]:
+            try:
+                odds_df = self.get_live_odds(league)
+                if odds_df.empty:
+                    continue
+                
+                event_odds = odds_df[odds_df["event_id"] == event_id]
+                if not event_odds.empty:
+                    return event_odds
+            except:
+                continue
+                
+        return pd.DataFrame()
     
     # =========================================================================
     # Player Props
